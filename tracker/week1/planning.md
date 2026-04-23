@@ -221,20 +221,20 @@ Tables 8–9 — Kimi Linear Base and Instruct vs Moonlight across diverse tasks
 | **FFN multiplier** | 2816 / 1024 = 2.75 | Matches the repo's current mid-scale SwiGLU style |
 | **Attention mix** | `--experimental-attention-variant gated_delta_net` with `--linear-attention-freq 3` | Repo-tested path; yields a 2x GDN + 1x SDPA hybrid pattern |
 | **Linear-attention block dims** | `linear-key-head-dim=64`, `linear-value-head-dim=64`, conv kernel `4` | Matches the shipped GDN functional test config |
-| **Training dataset** | SlimPajama 15B subset (fast ablations) / 100B subset (full run) | Both GLA and RLA/RDN used SlimPajama; more reproducible and literature-comparable than ClimbMix or FineWeb-Edu; publicly available |
-| **Tokenizer** | LLaMA-2 (32K vocab) for paper comparability; GPT-2 BPE if minimum friction needed | GDN/GLA papers used LLaMA-2; Gipfelsturm is currently wired for GPT-2 BPE |
-| **Primary optimizer** | Muon | ~2x compute efficiency vs AdamW at scale (Moonlight); used by Kimi Linear (MuonClip variant); modern choice for linear attention research |
-| **AdamW baseline** | Run one AdamW comparison to validate Muon matches | Confirm Muon reproduces AdamW loss curves on this architecture before committing to it for all ablations |
-| **Learning rate (Muon)** | ~1e-3 peak (tune based on Muon scaling recommendations) | Muon typically uses higher LR than AdamW; Kimi Linear used 1.1e-3 |
-| **Learning rate (AdamW)** | 3e-4 peak | Matches RLA/RDN and GLA baselines on SlimPajama |
+| **Training dataset** | FineWeb-Edu 15B subset (fast baselines) / 100B subset (full comparison) | Gated DeltaNet reports 15B ablations and 100B main runs on FineWeb-Edu; this best isolates architecture comparisons for CLER |
+| **Tokenizer** | LLaMA-2 SentencePiece from the start | GDN/GLA papers use LLaMA-style tokenization; starting here avoids regenerating FineWeb-Edu later |
+| **Primary optimizer** | AdamW | Best default for architecture comparisons because GDN/DeltaNet literature primarily reports AdamW-style recipes |
+| **Muon / NorMuon baseline** | Secondary optimizer ablation after AdamW softmax and GDN are stable | The repo already has NorMuon, but using it first would confound architecture effects with optimizer effects |
+| **Learning rate (Muon)** | Reuse the repo's validated NorMuon recipe when running optimizer ablations | Keep Muon tuning separate from the first GDN integration |
+| **Learning rate (AdamW)** | 3e-4 peak | Matches the current 350M AdamW launcher and stays in the common DeltaNet-family range |
 | **Weight decay** | 0.1 | Matches GDN and RLA/RDN |
-| **LR schedule** | Cosine decay (AdamW baseline) / WSD (Muon) | Cosine matches GDN/GLA/RLA literature; WSD is the Muon-native schedule |
-| **Warmup** | 0.5B tokens | Matches RLA/RDN at 100B scale; GLA used 0.5B for 340M |
+| **LR schedule** | WSD for initial repo-compatible 350M runs; consider cosine only if matching external GDN curves becomes the priority | Existing launchers and leaderboards use WSD, so this keeps the first comparison close to known-good repo settings |
+| **Warmup** | 25,600 samples (~105M tokens at seq len 4096) for initial WSD runs | Matches the current 350M launchers; tune later if matching external GDN curves becomes the priority |
 | **Min LR** | 3e-5 (AdamW) | Matches GLA and RLA/RDN |
-| **Global batch** | 4M tokens | Matches RLA/RDN; at seq len 4096 this is ~976 sequences per optimizer step |
+| **Global batch** | ~0.5M tokens (GBS=128 at seq len 4096) | Matches the current one-node 350M launchers and keeps the first runs inside the expected 8h budget |
 | **Sequence length** | 4096 | Matches GDN/Kimi training setup and Gipfelsturm launcher |
 | **Gradient clip** | 1.0 | Universal across all papers |
-| **Init std** | 0.006 | Matches RLA/RDN |
+| **Init std** | 0.02 for initial repo-compatible runs | Matches the current 350M launchers; revisit only if loss curves diverge from the paper baselines |
 | **Precision** | bf16 | Already used in Megatron test configs and cluster setup |
 | **Eval cadence** | WikiText-103 perplexity every checkpoint; LAMBADA accuracy; commonsense suite (PIQA, HellaSwag, WinoGrande, ARC) via `lm-eval`; recall benchmarks (SWDE, SQD, TQA, NQ, NIAH) if time allows | WikiText + LAMBADA are cheap; commonsense is the standard DeltaNet-family comparison; recall benchmarks test the core advantage of delta-rule attention |
 | **MMLU** | After checkpoint export | Script exists in repo (ModelOpt) |
@@ -244,16 +244,16 @@ Tables 8–9 — Kimi Linear Base and Instruct vs Moonlight across diverse tasks
 
 ## Integration TODO List
 
-1. Install the external `flash-linear-attention` dependency in the Alps runtime; Megatron's GDN layer hard-fails without it.
+1. Install the external `flash-linear-attention` dependency in the Alps runtime; Megatron's GDN layer hard-fails without it. **Implemented in `_research/launch/install_python_deps.sh`.**
 
-2. Add a new `300m-gdn` launcher preset in `launch.sh` with `20/1024/2816/16` and the GDN-specific args from the functional test.
+2. Add a new `350m-gdn` launcher preset with `20/1024/2816/16` and the GDN-specific args from the functional test. **Implemented as `_research/launch/transformer-pp-350m-gdn.sbatch`.**
 
-3. Add a SlimPajama download + conversion script mirroring the existing ClimbMix flow (`download_*` + `convert_data.sbatch`). Target a deterministic 15B-token subset for fast ablations and 100B for the full run.
+3. Add a FineWeb-Edu download + conversion script. Target a deterministic 15B-token subset for fast baselines and 100B for the full run. **Implemented as `_research/data/prepare_fineweb_edu.py` and `_research/data/convert_fineweb_edu.sbatch`.**
 
-4. Integrate the Muon optimizer into Megatron. Options: (a) use the open-source distributed Muon implementation from Moonlight, or (b) implement the Newton-Schulz orthogonalization step as a custom optimizer in Megatron's optimizer path. Run a single AdamW vs Muon comparison on the 15B subset to validate convergence.
+4. Keep AdamW as the default optimizer for architecture comparisons. Muon/NorMuon is already integrated in this repo and should be run later as a secondary ablation once AdamW softmax and GDN baselines are stable.
 
-5. Decide tokenizer path: stay on GPT-2 for fastest bring-up, or switch launcher/data prep to LLaMA-2 tokenizer for closer paper comparability.
+5. Use LLaMA-2 tokenization from the start for FineWeb-Edu conversion and both AdamW/GDN launchers. GPT-2 remains only for legacy ClimbMix smoke tests. **Implemented via `LLAMA2_TOKENIZER_MODEL` in the conversion and launch scripts.**
 
-6. Add a lightweight evaluation script path for WikiText-103 perplexity, LAMBADA, and wire the existing MMLU example as a post-checkpoint eval step. Install `lm-eval` harness for commonsense and recall benchmarks.
+6. Add a lightweight evaluation script path for WikiText perplexity and LAMBADA; keep broader `lm-eval` tasks for after checkpoint conversion is stable. **Initial HF-checkpoint wrapper implemented under `_research/eval/`.**
 
 7. Only after baseline is stable: consider deeper work on pure DeltaNet, RDN/RLA, or Kimi-style KDA — these are all significant integrations, not small config flips.

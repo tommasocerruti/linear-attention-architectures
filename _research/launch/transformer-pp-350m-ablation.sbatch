@@ -13,8 +13,8 @@
 #
 #SBATCH --job-name=transformer-pp-350m-ablation
 #SBATCH --time=01:00:00
-#SBATCH --output=/iopsstor/scratch/cscs/%u/megatron-lm-research-baseline/_research/results/runs/%x-%j.log
-#SBATCH --error=/iopsstor/scratch/cscs/%u/megatron-lm-research-baseline/_research/results/runs/%x-%j.log
+#SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
+#SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
@@ -27,7 +27,7 @@ set -euo pipefail
 echo "START TIME: $(date)"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
-REPO_DIR=/iopsstor/scratch/cscs/$USER/megatron-lm-research-baseline
+REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
 WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
 cd $WORKDIR
 

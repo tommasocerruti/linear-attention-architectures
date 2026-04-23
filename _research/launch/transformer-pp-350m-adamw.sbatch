@@ -3,12 +3,12 @@
 # Transformer++ 350M baseline on 1 GH200 node (4 GPUs).
 # 24L / 1024H / 2560F / 16h / 4kv (GQA).
 # SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
-# 15B tokens on ClimbMix, ~28610 steps at 524K tokens/step.
+# 15B tokens on FineWeb-Edu, ~28610 steps at 524K tokens/step.
 #
 #SBATCH --job-name=transformer-pp-350m-adamw
 #SBATCH --time=10:00:00
-#SBATCH --output=/iopsstor/scratch/cscs/%u/megatron-lm-research-baseline/_research/results/runs/%x-%j.log
-#SBATCH --error=/iopsstor/scratch/cscs/%u/megatron-lm-research-baseline/_research/results/runs/%x-%j.log
+#SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
+#SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
@@ -17,11 +17,16 @@
 #SBATCH --no-requeue
 
 set -euo pipefail
-: "${MEGATRON_DATA_PATH:?please set MEGATRON_DATA_PATH to the Megatron-binary dataset prefix (without .bin/.idx), e.g. /path/to/climbmix_small}"
+: "${MEGATRON_DATA_PATH:?please set MEGATRON_DATA_PATH to the FineWeb-Edu Megatron-binary dataset prefix (without .bin/.idx), e.g. /path/to/fineweb_edu_15b_llama2_text_document}"
+: "${LLAMA2_TOKENIZER_MODEL:?please set LLAMA2_TOKENIZER_MODEL to a local LLaMA-2 tokenizer.model path}"
+if [ ! -f "$LLAMA2_TOKENIZER_MODEL" ]; then
+    echo "ERROR: tokenizer model not found: $LLAMA2_TOKENIZER_MODEL" >&2
+    exit 1
+fi
 echo "START TIME: $(date)"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
-REPO_DIR=/iopsstor/scratch/cscs/$USER/megatron-lm-research-baseline
+REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
 WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
 cd $WORKDIR
 
@@ -53,7 +58,9 @@ NUM_KV_HEADS=4
 MBS=16
 GBS=128
 SEQ_LEN=4096
-TRAIN_SAMPLES=3662109
+TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
+TRAIN_ITERS=${TRAIN_ITERS:-}
+EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=3e-4
 MIN_LR=3e-5
 
@@ -62,11 +69,20 @@ PP=1
 CP=1
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=transformer-pp-350m-adamw-$(git rev-parse --short HEAD)
+EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-$(git rev-parse --short HEAD)}
+
+if [ -n "$TRAIN_ITERS" ]; then
+    TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
+    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_ITERS}
+else
+    TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
+    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_SAMPLES}
+fi
+EVAL_ITERS=${EVAL_ITERS:-0}
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
 export APERTUS_FEATURE=transformer-pp
-export APERTUS_TRACK=transformer-pp-350m
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-edu}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -97,11 +113,11 @@ NETWORK_SIZE_ARGS=(
 TRAINING_ARGS=(
     --micro-batch-size $MBS
     --global-batch-size $GBS
-    --train-samples $TRAIN_SAMPLES
-    --exit-duration-in-mins 595
+    ${TRAIN_STOP_ARGS[@]}
+    --exit-duration-in-mins $EXIT_DURATION_IN_MINS
     --log-interval 1
-    --eval-interval $TRAIN_SAMPLES
-    --eval-iters 0
+    --eval-interval $EVAL_INTERVAL
+    --eval-iters $EVAL_ITERS
     --optimizer adam
     --dataloader-type single
     --manual-gc
@@ -158,9 +174,8 @@ LOGGING_ARGS=(
 )
 
 TOKENIZER_ARGS=(
-    --tokenizer-type GPT2BPETokenizer
-    --vocab-file $WORKDIR/_research/data/gpt2-vocab.json
-    --merge-file $WORKDIR/_research/data/gpt2-merges.txt
+    --tokenizer-type Llama2Tokenizer
+    --tokenizer-model "$LLAMA2_TOKENIZER_MODEL"
 )
 
 DATA_ARGS=(

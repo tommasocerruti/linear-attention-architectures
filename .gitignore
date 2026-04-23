@@ -23,3 +23,5 @@ docs/apidocs
 
 # Git worktrees
 .worktrees/
+
+/tommaso_local

@@ -11,9 +11,12 @@ which itself builds on
 baseline as the training and experimentation framework, and add our
 project-specific tracking, experiments, and modifications here.
 
-Training data is
-[ClimbMix](https://huggingface.co/datasets/nvidia/Nemotron-ClimbMix)
-in Megatron binary format with the GPT-2 BPE tokenizer (50257 vocab).
+The first CLER baseline track uses
+[FineWeb-Edu 100BT shuffled](https://huggingface.co/datasets/HuggingFaceFW/fineweb_edu_100BT-shuffled)
+15B-token prefixes converted to Megatron binary format with a LLaMA-2
+SentencePiece tokenizer. The inherited GPT-2/ClimbMix path remains useful for
+quick pipeline smoke tests, but reported CLER baselines should stay on LLaMA-2
+for paper comparability.
 
 
 ## Project overview
@@ -67,11 +70,23 @@ export SBATCH_ACCOUNT=<your-slurm-account>        # required
 export SBATCH_RESERVATION=<your-reservation>      # optional; omit for normal queue
 export WANDB_API_KEY=<your-wandb-key>             # optional; omit to log locally only
 export WANDB_PROJECT=<your-wandb-project>         # optional; defaults to megatron-lm-research-baseline
-export MEGATRON_DATA_PATH=/path/to/climbmix_small # required; Megatron-binary prefix without .bin/.idx
+export LLAMA2_TOKENIZER_MODEL=/path/to/tokenizer.model # required for FineWeb-Edu conversion/training
+export MEGATRON_DATA_PATH=/path/to/fineweb_edu_15b_llama2_text_document # required; Megatron-binary prefix without .bin/.idx
 ```
 
-On Clariden, a tokenized ClimbMix copy is available at a shared
-read-only path:
+Build the FineWeb-Edu 15B prefix once from the repo root:
+
+```bash
+sbatch _research/data/convert_fineweb_edu.sbatch
+```
+
+The conversion job uses `LLAMA2_TOKENIZER_MODEL` for token counting and
+Megatron preprocessing, then prints the `MEGATRON_DATA_PATH` value when it
+completes. Details and the 100B variant are documented in
+[`_research/data/README.md`](_research/data/README.md).
+
+For smoke tests before FineWeb-Edu conversion finishes, a tokenized ClimbMix
+copy is available on Clariden at a shared read-only path:
 
 ```bash
 export MEGATRON_DATA_PATH=/capstor/store/cscs/swissai/infra01/datasets/nvidia/Nemotron-ClimbMix/climbmix_small_megatron/climbmix_small
@@ -94,7 +109,11 @@ cd cler
 # Submit. The alps3 enroot container +
 # _research/launch/install_python_deps.sh handle the Python environment
 # inside the job; no local install required.
+sbatch _research/launch/transformer-pp-350m-adamw-smoke.sbatch
+# if the smoke run is clean, launch the full AdamW baseline:
 sbatch _research/launch/transformer-pp-350m-adamw.sbatch
+# or the Gated DeltaNet hybrid baseline:
+sbatch _research/launch/transformer-pp-350m-gdn.sbatch
 # or the NorMuon variant:
 sbatch _research/launch/transformer-pp-350m-muon.sbatch
 # or a 1B-token quick reference (AdamW, ~30 min — good first smoke test):
@@ -105,7 +124,8 @@ To try a variant (different optimizer, LR, schedule, etc.), copy an
 existing sbatch and edit it. Frozen ablation runs live under
 `_research/leaderboards/<size>/runs/`.
 
-Python dependencies (`transformers`, `wandb`, `emerging-optimizers`) are
+Python dependencies (`transformers`, `datasets`, `sentencepiece`, `wandb`,
+`flash-linear-attention`, `emerging-optimizers`) are
 installed into `_research/packages/` inside the container on first run
 via `_research/launch/install_python_deps.sh`; no `pip install` on the
 login node is needed.
@@ -129,7 +149,9 @@ Ranked run lists per model size; each entry is a self-contained sbatch + W&B lin
 ## Configurations
 
 Transformer++ baselines (SwiGLU, RMSNorm, RoPE, GQA, AdamW, WSD schedule,
-bf16) on ClimbMix with GPT-2 BPE tokenizer. All configs use GBS=128
+bf16) on the configured Megatron dataset. The current CLER baselines use
+FineWeb-Edu with LLaMA-2 tokenization; legacy ClimbMix smoke tests use GPT-2
+BPE. All configs use GBS=128
 sequences (524K tokens/step) and are tuned for GH200 nodes with 4 GPUs each.
 
 | config | params | tokens | nodes | GPUs | DP | MBS | est. wall | GPU-h |
