@@ -4,6 +4,8 @@
 # Reuses the full 350M AdamW launcher with a small stopping condition.
 #
 #SBATCH --job-name=transformer-pp-350m-adamw-smoke
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=debug
 #SBATCH --time=00:30:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log

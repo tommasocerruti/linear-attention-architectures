@@ -74,7 +74,15 @@ export LLAMA2_TOKENIZER_MODEL=/path/to/tokenizer.model # required for FineWeb-Ed
 export MEGATRON_DATA_PATH=/path/to/fineweb_edu_15b_llama2_text_document # required; Megatron-binary prefix without .bin/.idx
 ```
 
-Build the FineWeb-Edu 15B prefix once from the repo root:
+Run the small FineWeb-Edu conversion smoke first:
+
+```bash
+sbatch _research/data/convert_fineweb_edu_smoke.sbatch
+export MEGATRON_DATA_PATH=$PWD/_research/results/data/fineweb_edu/fineweb_edu_50m_llama2_smoke/fineweb_edu_50m_llama2_smoke_text_document
+```
+
+If the conversion smoke and training smoke pass, build the FineWeb-Edu 15B
+prefix once from the repo root:
 
 ```bash
 sbatch _research/data/convert_fineweb_edu.sbatch
@@ -106,9 +114,8 @@ cd /iopsstor/scratch/cscs/$USER
 git clone git@github.com:tommasocerruti/cler.git
 cd cler
 
-# Submit. The alps3 enroot container +
-# _research/launch/install_python_deps.sh handle the Python environment
-# inside the job; no local install required.
+# Submit the training smoke after the conversion smoke has produced
+# fineweb_edu_50m_llama2_smoke and MEGATRON_DATA_PATH points at it.
 sbatch _research/launch/transformer-pp-350m-adamw-smoke.sbatch
 # if the smoke run is clean, launch the full AdamW baseline:
 sbatch _research/launch/transformer-pp-350m-adamw.sbatch

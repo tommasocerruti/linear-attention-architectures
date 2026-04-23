@@ -8,6 +8,8 @@
 # --overlap-param-gather intentionally omitted (breaks Muon, see README).
 #
 #SBATCH --job-name=transformer-pp-350m-muon
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=normal
 #SBATCH --time=10:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log

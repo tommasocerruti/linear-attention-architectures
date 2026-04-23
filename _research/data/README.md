@@ -43,6 +43,23 @@ Then, on Clariden:
 export LLAMA2_TOKENIZER_MODEL=/iopsstor/scratch/cscs/$USER/llama2-tokenizer/tokenizer.model
 ```
 
+## FineWeb-Edu Smoke
+
+Submit the small conversion smoke first. It builds a 50M-token prefix on the
+debug partition and validates Hugging Face streaming, SentencePiece token
+counting, and Megatron preprocessing before queuing the full 15B conversion:
+
+```bash
+export LLAMA2_TOKENIZER_MODEL=/iopsstor/scratch/cscs/$USER/llama2-tokenizer/tokenizer.model
+sbatch _research/data/convert_fineweb_edu_smoke.sbatch
+```
+
+Use the printed Megatron prefix for the training smoke, or set it directly:
+
+```bash
+export MEGATRON_DATA_PATH=$PWD/_research/results/data/fineweb_edu/fineweb_edu_50m_llama2_smoke/fineweb_edu_50m_llama2_smoke_text_document
+```
+
 ## FineWeb-Edu 15B
 
 Submit the conversion job from the repo root on Clariden:

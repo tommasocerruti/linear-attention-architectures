@@ -6,6 +6,8 @@
 # 15B tokens on FineWeb-Edu, ~28610 steps at 524K tokens/step.
 #
 #SBATCH --job-name=transformer-pp-350m-adamw
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=normal
 #SBATCH --time=10:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log

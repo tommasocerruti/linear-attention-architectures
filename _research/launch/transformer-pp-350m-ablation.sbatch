@@ -12,6 +12,8 @@
 # env-var branching.
 #
 #SBATCH --job-name=transformer-pp-350m-ablation
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=normal
 #SBATCH --time=01:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log

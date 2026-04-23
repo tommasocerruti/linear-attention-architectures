@@ -12,6 +12,8 @@
 #     sbatch _research/data/convert_fineweb_edu.sbatch
 #
 #SBATCH --job-name=convert-fineweb-edu
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=normal
 #SBATCH --time=12:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
@@ -44,6 +46,7 @@ FINEWEB_EDU_DATASET=${FINEWEB_EDU_DATASET:-HuggingFaceFW/fineweb_edu_100BT-shuff
 FINEWEB_EDU_SPLIT=${FINEWEB_EDU_SPLIT:-train}
 FINEWEB_EDU_TOKENS=${FINEWEB_EDU_TOKENS:-15000000000}
 FINEWEB_EDU_WORKERS=${FINEWEB_EDU_WORKERS:-64}
+FINEWEB_EDU_MAX_DOCUMENTS=${FINEWEB_EDU_MAX_DOCUMENTS:-}
 FINEWEB_EDU_OUTPUT_ROOT=${FINEWEB_EDU_OUTPUT_ROOT:-$WORKDIR/_research/results/data/fineweb_edu}
 FINEWEB_EDU_TOKENIZER_MODEL=${FINEWEB_EDU_TOKENIZER_MODEL:-${LLAMA2_TOKENIZER_MODEL:-}}
 
@@ -72,13 +75,20 @@ mkdir -p "$FINEWEB_EDU_DIR"
 
 bash "$WORKDIR/_research/launch/install_python_deps.sh" "$PACKAGE_DIR"
 
-python3 "$WORKDIR/_research/data/prepare_fineweb_edu.py" \
-    --dataset "$FINEWEB_EDU_DATASET" \
-    --split "$FINEWEB_EDU_SPLIT" \
-    --target-tokens "$FINEWEB_EDU_TOKENS" \
-    --token-count-key "" \
-    --sentencepiece-tokenizer-model "$FINEWEB_EDU_TOKENIZER_MODEL" \
+PREPARE_ARGS=(
+    --dataset "$FINEWEB_EDU_DATASET"
+    --split "$FINEWEB_EDU_SPLIT"
+    --target-tokens "$FINEWEB_EDU_TOKENS"
+    --token-count-key ""
+    --sentencepiece-tokenizer-model "$FINEWEB_EDU_TOKENIZER_MODEL"
     --output "$FINEWEB_EDU_JSONL"
+)
+if [ -n "$FINEWEB_EDU_MAX_DOCUMENTS" ]; then
+    PREPARE_ARGS+=(--max-documents "$FINEWEB_EDU_MAX_DOCUMENTS")
+fi
+
+python3 "$WORKDIR/_research/data/prepare_fineweb_edu.py" \
+    "${PREPARE_ARGS[@]}"
 
 python3 "$WORKDIR/tools/preprocess_data.py" \
     --input "$FINEWEB_EDU_JSONL" \

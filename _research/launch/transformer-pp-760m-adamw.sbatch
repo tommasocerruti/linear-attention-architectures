@@ -6,6 +6,8 @@
 # 30B tokens on ClimbMix, ~57220 steps at 524K tokens/step.
 #
 #SBATCH --job-name=transformer-pp-760m-adamw
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=normal
 #SBATCH --time=09:00:00
 # 4 nodes (16 GPUs), TP=1, DP=16. MBS=4 at DP=16: num_microbatches = 128/(4*16) = 2.
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
