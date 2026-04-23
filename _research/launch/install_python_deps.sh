@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 PKG_DIR=${1:?usage: install_python_deps.sh PKG_DIR}
-MARKER=$PKG_DIR/.deps_installed_v8
+MARKER=$PKG_DIR/.deps_installed_v9
 LOCK=$PKG_DIR/.install.lockdir
 
 mkdir -p "$PKG_DIR"
@@ -38,8 +38,8 @@ fi
 $INSTALL --upgrade --target="$PKG_DIR" transformers wandb datasets sentencepiece einops
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'causal-conv1d~=1.5' \
-    'fla-core~=0.4.0' \
-    'flash-linear-attention~=0.4.0'
+    'fla-core==0.4.2' \
+    'flash-linear-attention==0.4.2'
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0'
 
