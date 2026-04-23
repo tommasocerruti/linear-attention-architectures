@@ -262,8 +262,8 @@ class TransformerConfig(ModelParallelConfig):
     ####################
     # attention variant
     ####################
-    experimental_attention_variant: Optional[Literal['gated_delta_net', 'dsa']] = None
-    """Type of attention variant to use. Currently support gated_delta_net and dsa."""
+    experimental_attention_variant: Optional[Literal['gated_delta_net', 'delta_net', 'dsa']] = None
+    """Type of attention variant to use. Currently support gated_delta_net, delta_net and dsa."""
 
     ####################
     # DSA
@@ -295,19 +295,19 @@ class TransformerConfig(ModelParallelConfig):
     - A list that defines a custom pattern, e.g.: [1,1,1,0,1,1,1,0,1,1,1,0]"""
 
     linear_conv_kernel_dim: Optional[int] = 4
-    """Conv kernel dimension for the gated delta net."""
+    """Conv kernel dimension for linear attention variants such as gated_delta_net and delta_net."""
 
     linear_key_head_dim: Optional[int] = 128
-    """Query and key head dimension for the gated delta net."""
+    """Query and key head dimension for linear attention variants such as gated_delta_net and delta_net."""
 
     linear_value_head_dim: Optional[int] = 128
-    """Value and gate head dimension for the gated delta net."""
+    """Value head dimension for linear attention variants; for gated_delta_net this also sets the gate head dimension."""
 
     linear_num_key_heads: Optional[int] = 16
-    """Number of query and key heads for the gated delta net."""
+    """Number of query and key heads for linear attention variants."""
 
     linear_num_value_heads: Optional[int] = 32
-    """Number of value and gate heads for the gated delta net."""
+    """Number of value heads for linear attention variants; for gated_delta_net this also sets the gate heads."""
 
     ####################
     # initialization
@@ -1064,31 +1064,43 @@ class TransformerConfig(ModelParallelConfig):
                 f"tensor_model_parallel_size ({self.tensor_model_parallel_size})."
             )
 
-        if self.experimental_attention_variant == "gated_delta_net":
+        if self.experimental_attention_variant in {"gated_delta_net", "delta_net"}:
             assert (
                 self.linear_attention_freq is not None
-            ), f"linear_attention_freq must be set for linear gated_delta_net."
+            ), (
+                "linear_attention_freq must be set for linear attention variants "
+                f"such as {self.experimental_attention_variant}."
+            )
 
             # Check required parameters
             assert (
                 self.linear_conv_kernel_dim is not None
-            ), "linear_conv_kernel_dim must be set for gated delta net."
+            ), "linear_conv_kernel_dim must be set for linear attention variants."
             assert (
                 self.linear_key_head_dim is not None
-            ), "linear_key_head_dim must be set for gated delta net."
+            ), "linear_key_head_dim must be set for linear attention variants."
             assert (
                 self.linear_value_head_dim is not None
-            ), "linear_value_head_dim must be set for gated delta net."
+            ), "linear_value_head_dim must be set for linear attention variants."
             assert (
                 self.linear_num_key_heads is not None
-            ), "linear_num_key_heads must be set for gated delta net."
+            ), "linear_num_key_heads must be set for linear attention variants."
             assert (
                 self.linear_num_value_heads is not None
-            ), "linear_num_value_heads must be set for gated delta net."
-            assert self.linear_num_value_heads % self.linear_num_key_heads == 0, (
-                f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
-                f"linear_num_key_heads ({self.linear_num_key_heads})."
-            )
+            ), "linear_num_value_heads must be set for linear attention variants."
+            if self.experimental_attention_variant == "gated_delta_net":
+                assert self.linear_num_value_heads % self.linear_num_key_heads == 0, (
+                    f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
+                    f"linear_num_key_heads ({self.linear_num_key_heads})."
+                )
+            else:
+                assert self.linear_num_value_heads == self.linear_num_key_heads, (
+                    "delta_net currently requires matching q/k and value head counts, got "
+                    f"{self.linear_num_key_heads=} and {self.linear_num_value_heads=}."
+                )
+                assert not self.attention_output_gate, (
+                    "delta_net does not support --attention-output-gate in this wrapper."
+                )
 
             # Check tensor parallelism compatibility
             tp_cp_size = self.tensor_model_parallel_size * self.context_parallel_size

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 PKG_DIR=${1:?usage: install_python_deps.sh PKG_DIR}
-MARKER=$PKG_DIR/.deps_installed_v7
+MARKER=$PKG_DIR/.deps_installed_v8
 LOCK=$PKG_DIR/.install.lockdir
 
 mkdir -p "$PKG_DIR"
@@ -14,6 +14,7 @@ import transformers
 import wandb
 from fla.modules.convolution import causal_conv1d
 from fla.modules.l2norm import l2norm
+from fla.ops.delta_rule import chunk_delta_rule
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 PY
 }
@@ -51,6 +52,7 @@ import transformers
 import wandb
 from fla.modules.convolution import causal_conv1d
 from fla.modules.l2norm import l2norm
+from fla.ops.delta_rule import chunk_delta_rule
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 PY
 fi

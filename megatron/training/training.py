@@ -595,6 +595,33 @@ def num_floating_point_operations(args, batch_size):
                         * v_dim
                     )
                 )
+            elif args.experimental_attention_variant == "delta_net":
+                # Calculate the FLOPs for the plain delta net attention.
+                qk_head_dim = args.linear_key_head_dim
+                v_head_dim = args.linear_value_head_dim
+                num_heads = args.linear_num_key_heads
+                qk_dim = qk_head_dim * num_heads
+                v_dim = v_head_dim * num_heads
+                linear_self_attn_term = (
+                    forward_backward_expansion_factor
+                    * fma_expansion_factor
+                    * (
+                        ## in proj
+                        args.hidden_size
+                        * (2 * qk_dim + v_dim + num_heads)
+                        ## conv1d
+                        + args.linear_conv_kernel_dim
+                        * (2 * qk_dim + v_dim)
+                        ## delta rule
+                        + num_heads
+                        * qk_head_dim
+                        * v_head_dim
+                        * 4
+                        ## out proj
+                        + args.hidden_size
+                        * v_dim
+                    )
+                )
             else:
                 raise ValueError(
                     "Invalid experimental_attention_variant: "
