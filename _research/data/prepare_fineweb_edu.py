@@ -7,14 +7,12 @@ FineWeb-Edu 100BT shuffled dataset this gives a deterministic 15B-token prefix
 with no local shuffle step.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional, Tuple
 
 
 def parse_args() -> argparse.Namespace:
@@ -115,7 +113,7 @@ def load_sentencepiece_tokenizer(model_path: str) -> Any:
     return tokenizer
 
 
-def load_fallback_tokenizer(name: str, sentencepiece_model: str | None = None) -> Any:
+def load_fallback_tokenizer(name: str, sentencepiece_model: Optional[str] = None) -> Any:
     if sentencepiece_model:
         return load_sentencepiece_tokenizer(sentencepiece_model)
 
@@ -151,13 +149,13 @@ def existing_output_is_complete(output: Path, args: argparse.Namespace) -> bool:
 
 
 def get_token_count(
-    sample: dict[str, Any],
+    sample: Dict[str, Any],
     token_count_key: str,
     fallback_tokenizer: str,
-    sentencepiece_model: str | None,
+    sentencepiece_model: Optional[str],
     text: str,
-    tokenizer: Any | None,
-) -> tuple[int, Any | None, str]:
+    tokenizer: Optional[Any],
+) -> Tuple[int, Optional[Any], str]:
     if token_count_key and token_count_key in sample and sample[token_count_key] is not None:
         return int(sample[token_count_key]), tokenizer, f"dataset:{token_count_key}"
 
