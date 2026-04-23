@@ -1,0 +1,33 @@
+#!/bin/bash
+#
+# Short Gated DeltaNet runtime smoke for the FineWeb-Edu/LLaMA-2 path.
+# Reuses the full 350M GDN launcher with a small stopping condition.
+#
+#SBATCH --job-name=transformer-pp-350m-gdn-smoke
+#SBATCH --account=lsaie-ss26
+#SBATCH --partition=debug
+#SBATCH --time=00:30:00
+#SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
+#SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=4
+#SBATCH --gpus-per-node=4
+#SBATCH --cpus-per-task=72
+#SBATCH --mem=460000
+#SBATCH --no-requeue
+
+set -euo pipefail
+
+REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+SCRIPT_DIR=$REPO_ROOT/_research/launch
+cd "$REPO_ROOT"
+
+export TRAIN_ITERS=${TRAIN_ITERS:-50}
+export EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-25}
+export EVAL_INTERVAL=${EVAL_INTERVAL:-25}
+export EVAL_ITERS=${EVAL_ITERS:-1}
+GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+export EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn-smoke-$GIT_SHA}
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn-smoke}
+
+exec bash "$SCRIPT_DIR/transformer-pp-350m-gdn.sbatch"

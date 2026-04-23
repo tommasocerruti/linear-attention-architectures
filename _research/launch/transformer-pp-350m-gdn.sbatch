@@ -63,7 +63,9 @@ NUM_KV_HEADS=4
 MBS=16
 GBS=128
 SEQ_LEN=4096
-TRAIN_SAMPLES=3662109
+TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
+TRAIN_ITERS=${TRAIN_ITERS:-}
+EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=3e-4
 MIN_LR=3e-5
 
@@ -72,11 +74,29 @@ PP=1
 CP=1
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=transformer-pp-350m-gdn-$(git rev-parse --short HEAD)
+EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn-$(git rev-parse --short HEAD)}
+
+if [ -n "$TRAIN_ITERS" ]; then
+    TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
+    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_ITERS}
+    LR_DURATION_ARGS=(
+        --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
+        --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
+        --lr-wsd-decay-iters ${LR_WSD_DECAY_ITERS:-10}
+    )
+else
+    TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
+    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_SAMPLES}
+    LR_DURATION_ARGS=(
+        --lr-warmup-samples 25600
+        --lr-wsd-decay-samples 732422
+    )
+fi
+EVAL_ITERS=${EVAL_ITERS:-0}
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
 export APERTUS_FEATURE=gated-deltanet
-export APERTUS_TRACK=transformer-pp-350m-gdn
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -118,11 +138,11 @@ GDN_ARGS=(
 TRAINING_ARGS=(
     --micro-batch-size $MBS
     --global-batch-size $GBS
-    --train-samples $TRAIN_SAMPLES
-    --exit-duration-in-mins 595
+    ${TRAIN_STOP_ARGS[@]}
+    --exit-duration-in-mins $EXIT_DURATION_IN_MINS
     --log-interval 1
-    --eval-interval $TRAIN_SAMPLES
-    --eval-iters 0
+    --eval-interval $EVAL_INTERVAL
+    --eval-iters $EVAL_ITERS
     --optimizer adam
     --dataloader-type single
     --manual-gc
@@ -145,9 +165,8 @@ LEARNING_RATE_ARGS=(
     --lr $LR
     --min-lr $MIN_LR
     --lr-decay-style WSD
-    --lr-warmup-samples 25600
     --lr-wsd-decay-style minus_sqrt
-    --lr-wsd-decay-samples 732422
+    ${LR_DURATION_ARGS[@]}
 )
 
 INITIALIZATION_ARGS=(
