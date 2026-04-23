@@ -86,6 +86,7 @@ CONVERSION_CMD="set -euo pipefail; \
     export TMPDIR=$TMPDIR; \
     export OMP_NUM_THREADS=$OMP_NUM_THREADS; \
     bash $WORKDIR/_research/launch/install_python_deps.sh $PACKAGE_DIR; \
+    set +e; \
     python3 $WORKDIR/_research/data/prepare_fineweb_edu.py \
         --dataset $FINEWEB_EDU_DATASET \
         --split $FINEWEB_EDU_SPLIT \
@@ -94,6 +95,12 @@ CONVERSION_CMD="set -euo pipefail; \
         --sentencepiece-tokenizer-model $FINEWEB_EDU_TOKENIZER_MODEL \
         --output $FINEWEB_EDU_JSONL \
         ${PREPARE_EXTRA_ARGS[*]}; \
+    PREPARE_STATUS=\$?; \
+    set -e; \
+    if [ \$PREPARE_STATUS -ne 0 ]; then \
+        python3 -c 'import json, pathlib, sys; manifest = pathlib.Path(sys.argv[1]); data = json.loads(manifest.read_text()) if manifest.exists() else {}; sys.exit(0 if data.get(\"status\") == \"complete\" else 1)' ${FINEWEB_EDU_JSONL}.manifest.json || exit \$PREPARE_STATUS; \
+        echo 'prepare_fineweb_edu.py exited non-zero after writing a complete manifest; continuing to preprocessing.'; \
+    fi; \
     python3 $WORKDIR/tools/preprocess_data.py \
         --input $FINEWEB_EDU_JSONL \
         --output-prefix $FINEWEB_EDU_PREFIX \
