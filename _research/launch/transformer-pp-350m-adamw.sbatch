@@ -79,6 +79,7 @@ if [ -n "$TRAIN_ITERS" ]; then
     LR_DURATION_ARGS=(
         --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
         --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
+        --lr-wsd-decay-iters ${LR_WSD_DECAY_ITERS:-10}
     )
 else
     TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
