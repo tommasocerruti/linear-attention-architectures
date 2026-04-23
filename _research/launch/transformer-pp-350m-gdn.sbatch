@@ -54,11 +54,11 @@ mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACH
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)
 MASTER_PORT=25678
 
-NUM_LAYERS=20
-HIDDEN=1024
-FFN_HIDDEN=2816
-NUM_HEADS=16
-NUM_KV_HEADS=4
+NUM_LAYERS=${NUM_LAYERS:-20}
+HIDDEN=${HIDDEN:-1024}
+FFN_HIDDEN=${FFN_HIDDEN:-2816}
+NUM_HEADS=${NUM_HEADS:-16}
+NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
 MBS=16
 GBS=128
@@ -66,8 +66,8 @@ SEQ_LEN=4096
 TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
 TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
-LR=3e-4
-MIN_LR=3e-5
+LR=${LR:-3e-4}
+MIN_LR=${MIN_LR:-3e-5}
 
 TP=1
 PP=1
@@ -126,12 +126,12 @@ NETWORK_SIZE_ARGS=(
 
 GDN_ARGS=(
     --experimental-attention-variant gated_delta_net
-    --linear-attention-freq 3
-    --linear-conv-kernel-dim 4
-    --linear-key-head-dim 64
-    --linear-value-head-dim 64
-    --linear-num-key-heads 4
-    --linear-num-value-heads 8
+    --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+    --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+    --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+    --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
+    --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+    --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
     --attention-output-gate
 )
 
