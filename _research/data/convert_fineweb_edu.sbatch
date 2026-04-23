@@ -73,31 +73,40 @@ FINEWEB_EDU_DATA_PATH=${FINEWEB_EDU_PREFIX}_text_document
 
 mkdir -p "$FINEWEB_EDU_DIR"
 
-bash "$WORKDIR/_research/launch/install_python_deps.sh" "$PACKAGE_DIR"
-
-PREPARE_ARGS=(
-    --dataset "$FINEWEB_EDU_DATASET"
-    --split "$FINEWEB_EDU_SPLIT"
-    --target-tokens "$FINEWEB_EDU_TOKENS"
-    --token-count-key ""
-    --sentencepiece-tokenizer-model "$FINEWEB_EDU_TOKENIZER_MODEL"
-    --output "$FINEWEB_EDU_JSONL"
-)
+PREPARE_EXTRA_ARGS=()
 if [ -n "$FINEWEB_EDU_MAX_DOCUMENTS" ]; then
-    PREPARE_ARGS+=(--max-documents "$FINEWEB_EDU_MAX_DOCUMENTS")
+    PREPARE_EXTRA_ARGS+=(--max-documents "$FINEWEB_EDU_MAX_DOCUMENTS")
 fi
 
-python3 "$WORKDIR/_research/data/prepare_fineweb_edu.py" \
-    "${PREPARE_ARGS[@]}"
+CONVERSION_CMD="set -euo pipefail; \
+    cd $WORKDIR; \
+    export PYTHONPATH=$WORKDIR:$PACKAGE_DIR:$WORKDIR\${PYTHONPATH:+:\$PYTHONPATH}; \
+    export HF_HOME=$HF_HOME; \
+    export HF_DATASETS_CACHE=$HF_DATASETS_CACHE; \
+    export TMPDIR=$TMPDIR; \
+    export OMP_NUM_THREADS=$OMP_NUM_THREADS; \
+    bash $WORKDIR/_research/launch/install_python_deps.sh $PACKAGE_DIR; \
+    python3 $WORKDIR/_research/data/prepare_fineweb_edu.py \
+        --dataset $FINEWEB_EDU_DATASET \
+        --split $FINEWEB_EDU_SPLIT \
+        --target-tokens $FINEWEB_EDU_TOKENS \
+        --token-count-key '' \
+        --sentencepiece-tokenizer-model $FINEWEB_EDU_TOKENIZER_MODEL \
+        --output $FINEWEB_EDU_JSONL \
+        ${PREPARE_EXTRA_ARGS[*]}; \
+    python3 $WORKDIR/tools/preprocess_data.py \
+        --input $FINEWEB_EDU_JSONL \
+        --output-prefix $FINEWEB_EDU_PREFIX \
+        --tokenizer-type Llama2Tokenizer \
+        --tokenizer-model $FINEWEB_EDU_TOKENIZER_MODEL \
+        --append-eod \
+        --workers $FINEWEB_EDU_WORKERS \
+        --log-interval 10000"
 
-python3 "$WORKDIR/tools/preprocess_data.py" \
-    --input "$FINEWEB_EDU_JSONL" \
-    --output-prefix "$FINEWEB_EDU_PREFIX" \
-    --tokenizer-type Llama2Tokenizer \
-    --tokenizer-model "$FINEWEB_EDU_TOKENIZER_MODEL" \
-    --append-eod \
-    --workers "$FINEWEB_EDU_WORKERS" \
-    --log-interval 10000
+echo "CMD: $CONVERSION_CMD"
+srun -lu --mpi=pmix --network=disable_rdzv_get --environment=$WORKDIR/_research/launch/alps3.toml \
+    --cpus-per-task $SLURM_CPUS_PER_TASK --wait 120 \
+    bash -lc "$CONVERSION_CMD"
 
 echo "FineWeb-Edu Megatron prefix:"
 echo "export MEGATRON_DATA_PATH=$FINEWEB_EDU_DATA_PATH"
