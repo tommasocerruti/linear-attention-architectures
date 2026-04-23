@@ -1,15 +1,13 @@
 # Tracker
 
 Project tracker for CLER:
-
-- Week 0: Start–12 Apr
-- Week 1: 13–19 Apr
-- Week 2: 20–26 Apr
-- Week 3: 27 Apr–3 May
-- Week 4: 4–10 May
-- Week 5: 11–17 May
-- Week 6: 18–24 May
-- Week 7: 25-28 May
+- Week 0 [Start–19 Apr]: Proposal.  
+- Week 1 [20–26 Apr]: Quick-run baselines.   
+- Week 2 [27 Apr–3 May]: Stronger baselines.   
+- Week 3 [4–10 May]: First CLER integration.   
+- Week 4 [11–17 May]: CLER ablation and stabilization.   
+- Week 5 [18–24 May]: Stronger CLER runs and comparison against baselines.   
+- Week 6 [25-28 May]: Poster session prep and decision on whether to continue working on it.  
 
 Poster Session deadline:
 - Date: 28 May
