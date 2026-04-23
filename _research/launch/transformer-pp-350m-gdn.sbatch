@@ -184,7 +184,6 @@ DISTRIBUTED_ARGS=(
     --context-parallel-size $CP
     --use-distributed-optimizer
     --overlap-grad-reduce
-    --overlap-param-gather
     --sequence-parallel
 )
 
