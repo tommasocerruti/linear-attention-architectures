@@ -76,9 +76,17 @@ EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-$(git rev-parse --short HEAD)}
 if [ -n "$TRAIN_ITERS" ]; then
     TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
     EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_ITERS}
+    LR_DURATION_ARGS=(
+        --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
+        --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
+    )
 else
     TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
     EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_SAMPLES}
+    LR_DURATION_ARGS=(
+        --lr-warmup-samples 25600
+        --lr-wsd-decay-samples 732422
+    )
 fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
@@ -142,9 +150,8 @@ LEARNING_RATE_ARGS=(
     --lr $LR
     --min-lr $MIN_LR
     --lr-decay-style WSD
-    --lr-warmup-samples 25600
     --lr-wsd-decay-style minus_sqrt
-    --lr-wsd-decay-samples 732422
+    ${LR_DURATION_ARGS[@]}
 )
 
 INITIALIZATION_ARGS=(
