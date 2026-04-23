@@ -18,14 +18,16 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+SCRIPT_DIR=$REPO_ROOT/_research/launch
+cd "$REPO_ROOT"
 
 export TRAIN_ITERS=${TRAIN_ITERS:-50}
 export EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-25}
 export EVAL_INTERVAL=${EVAL_INTERVAL:-25}
 export EVAL_ITERS=${EVAL_ITERS:-1}
-export EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-smoke-$(git -C "$REPO_ROOT" rev-parse --short HEAD)}
+GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
+export EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-smoke-$GIT_SHA}
 export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-edu-smoke}
 
 exec bash "$SCRIPT_DIR/transformer-pp-350m-adamw.sbatch"

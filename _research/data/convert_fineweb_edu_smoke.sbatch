@@ -17,7 +17,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+SCRIPT_DIR=$REPO_ROOT/_research/data
+cd "$REPO_ROOT"
 
 export FINEWEB_EDU_TOKENS=${FINEWEB_EDU_TOKENS:-50000000}
 export FINEWEB_EDU_NAME=${FINEWEB_EDU_NAME:-fineweb_edu_50m_llama2_smoke}
