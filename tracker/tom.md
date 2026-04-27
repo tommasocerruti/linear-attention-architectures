@@ -20,14 +20,19 @@ The full path was validated on Clariden in the intended runtime environment:
 
 The current quick-run comparison is:
 
-| Baseline | Params | Optimizer | Data | Tokenizer | Final train loss | Final val loss | Val PPL | Throughput |
-| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: |
-| Transformer++ softmax (24L) | 317.2M | AdamW | FineWeb-Edu 50M | LLaMA-2 | 5.9744 | 6.0082 | 406.8 | 331.0 |
-| Gated DeltaNet (22L) | 313.4M | AdamW | FineWeb-Edu 50M | LLaMA-2 | 5.1020 | 5.1217 | 167.6 | 302.0 |
-| DeltaNet (24L) | 319.5M | AdamW | FineWeb-Edu 50M | LLaMA-2 | 6.2663 | 6.3069 | 548.3 | 294.3 |
+| Baseline | Params | Optimizer | Data | Tokenizer | Final train loss | Final val loss | Val PPL | Throughput (TFLOP/s/GPU) | Throughput (ktokens/s/GPU, approx.) |
+| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Transformer++ softmax (24L) | 317.2M | AdamW | FineWeb-Edu 50M | LLaMA-2 | 5.9744 | 6.0082 | 406.8 | 331.0 | 171 |
+| Gated DeltaNet (22L) | 313.4M | AdamW | FineWeb-Edu 50M | LLaMA-2 | 5.1020 | 5.1217 | 167.6 | 302.0 | 156 |
+| DeltaNet (24L) | 319.5M | AdamW | FineWeb-Edu 50M | LLaMA-2 | 6.2663 | 6.3069 | 548.3 | 294.3 | 152 |
 
 `lm loss` is the autoregressive cross-entropy / negative log-likelihood
 averaged over predicted tokens, and perplexity is therefore `exp(loss)`.
+The `ktokens/s/GPU` values are approximate for softmax and Gated DeltaNet. I
+used the measured DeltaNet value (`152,136.8 tokens/s/GPU`) and scaled it by
+the throughput ratios:
+`tokens/s ≈ 152,136.8 * (throughput_model / 294.3)`, then rounded to the
+nearest integer in `ktokens/s/GPU`.
 
 The figure below shows the same three-way comparison visually: training loss,
 validation loss, and throughput over the near-full 50M-token run.
@@ -165,3 +170,91 @@ What I implemented:
 ---
 
 ## Week 2
+
+### Week 1 Recap
+
+While revisiting the finished Clariden logs, I noticed that I had initially
+mixed up the throughput units. The logs report both `tokens/s/GPU` and
+`TFLOP/s/GPU`, and for runtime estimation the relevant quantity is
+`tokens/s/GPU`, not `TFLOP/s/GPU`. More precisely:
+
+- `tokens/s/GPU` comes from the local Apertus logging hook in
+  [_research/logging_patch/hooks.py](../_research/logging_patch/hooks.py),
+  where it is computed from wall-clock deltas between successive training-log
+  calls;
+- `TFLOP/s/GPU` comes from Megatron's own `--log-throughput` path in
+  [megatron/training/training.py](../megatron/training/training.py).
+
+The exact Week 1 recap from the final training-step log lines is:
+
+| Baseline | Params | Final train loss | Final val loss | Val PPL | Throughput (ktokens/s/GPU) | Throughput (TFLOP/s/GPU) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Transformer++ softmax (24L) | 317.2M | 5.9744 | 6.0082 | 406.8 | 143.3 | 331.0 |
+| Gated DeltaNet (22L) | 313.4M | 5.1020 | 5.1217 | 167.6 | 161.4 | 302.0 |
+| DeltaNet (24L) | 319.5M | 6.2663 | 6.3069 | 548.3 | 152.1 | 294.3 |
+
+These values were read directly from the finished Clariden logs:
+
+- `transformer-pp-350m-adamw-smoke-1929006.log`
+- `transformer-pp-350m-gdn-smoke-1929007.log`
+- `transformer-pp-350m-deltanet-smoke-1929951.log`
+
+### Runtime Planning
+
+I first tried scheduling the longer runs by reserving 12 hours for the
+conversion step and 10 hours for each training step. In practice, the first
+conversion job kept being postponed in the `normal` partition, so I estimated
+the expected runtimes from the Week 1 quick-run measurements before
+resubmitting.
+
+The runtime planning reuses the same training setup as the 350M Transformer++
+baseline launcher
+[_research/launch/transformer-pp-350m-adamw.sbatch](../_research/launch/transformer-pp-350m-adamw.sbatch),
+unless explicitly overridden in the Gated DeltaNet and DeltaNet launchers. In
+particular, this means:
+
+- micro-batch size = 16
+- global batch size = 128
+- sequence length = 4096
+- tokens per iteration = `128 * 4096 = 524,288`
+- data-parallel training on 4 GPUs with `TP=1`, `PP=1`, `CP=1`
+- AdamW with `lr = 3e-4`, `min-lr = 3e-5`, WSD schedule, `bf16`
+- FineWeb-Edu data and the LLaMA-2 SentencePiece tokenizer
+
+This gives:
+
+- `1B / 524,288 = 1907` iterations
+- `15B / 524,288 = 28,610` iterations
+
+Using the measured `tokens/s/GPU` values from the recap table above, the
+approximate per-step times are:
+
+- Transformer++ softmax: `~0.91 s/iter`
+- Gated DeltaNet: `~0.81 s/iter`
+- DeltaNet: `~0.86 s/iter`
+
+This implies the following training-only runtimes:
+
+| Baseline | 1B tokens | 15B tokens |
+| --- | ---: | ---: |
+| Transformer++ softmax | ~29.1 min | ~7.3 h |
+| Gated DeltaNet | ~25.8 min | ~6.5 h |
+| DeltaNet | ~27.4 min | ~6.9 h |
+
+From these estimates, the practical conclusion is:
+
+- `1B` conversion should be resubmitted separately with a shorter walltime
+  target (`6h`) to improve schedulability;
+- `1B` training jobs should fit comfortably within `2h`;
+- `15B` training jobs should be kept around `8h`;
+- the `15B` conversion should be launched only after the `1B` stage is
+  complete, instead of queueing the entire `1B -> 15B` chain at once.
+
+One operational detail that became clear during resubmission is that the
+FineWeb-Edu dataset is not stored locally on Clariden as a ready-made training
+prefix. The conversion job streams the raw FineWeb-Edu source from Hugging Face,
+counts tokens with the LLaMA-2 tokenizer, writes a deterministic local JSONL
+prefix, and only then converts that local prefix into Megatron `.bin` / `.idx`
+files. In practice, the existence check is therefore not testing whether the
+raw dataset exists on the cluster, but whether the converted local Megatron
+prefix already exists at the expected scratch path.
