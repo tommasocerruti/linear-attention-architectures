@@ -7,7 +7,7 @@ from megatron.core.models.backends import BackendSpecProvider
 from megatron.core.ssm.delta_net import DeltaNet, DeltaNetSubmodules
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNetSubmodules
 from megatron.core.ssm.gated_delta_net_pytorch import GatedDeltaNet as GatedDeltaNetPyTorch
-from megatron.core.ssm.kda import KimiDeltaAttention
+from megatron.core.ssm.kda import KimiDeltaAttention, KimiDeltaAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType, LayerType
 from megatron.core.transformer.experimental_attention_variant.dsa import (
     DSAIndexer,
@@ -124,8 +124,17 @@ def get_kda_module_spec(
 ) -> ModuleSpec:
     """Build module spec for Kimi Delta Attention."""
 
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
     return ModuleSpec(
         module=KimiDeltaAttention,
+        submodules=KimiDeltaAttentionSubmodules(
+            in_proj=backend.column_parallel_linear(),
+            f_out_proj=backend.column_parallel_linear(),
+            g_out_proj=backend.column_parallel_linear(),
+            out_proj=backend.row_parallel_linear(),
+        ),
         metainfo={"fuse_input_layernorm": False},
     )
 

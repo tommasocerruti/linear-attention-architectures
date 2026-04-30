@@ -81,10 +81,13 @@ EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_ITERS}
 EVAL_ITERS=${EVAL_ITERS:-0}
 LR=${LR:-3.6e-4}
 MIN_LR=${MIN_LR:-3.6e-5}
+LINEAR_ATTENTION_PATTERN=${LINEAR_ATTENTION_PATTERN:-([1]*6)}
 
 TP=1
 PP=1
 CP=1
+# Set KDA_USE_FLASHKDA=1 to let FLA try the FlashKDA backend. Default stays on Triton.
+KDA_USE_FLASHKDA=${KDA_USE_FLASHKDA:-0}
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
 GIT_SHORT_HASH=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)
@@ -122,13 +125,16 @@ NETWORK_SIZE_ARGS=(
 
 KDA_ARGS=(
     --experimental-attention-variant kda
-    --linear-attention-freq 3
+    --linear-attention-freq "$LINEAR_ATTENTION_PATTERN"
     --linear-conv-kernel-dim 4
     --linear-key-head-dim 64
     --linear-value-head-dim 64
     --linear-num-key-heads 4
     --linear-num-value-heads 8
 )
+if [ "$KDA_USE_FLASHKDA" = "1" ]; then
+    KDA_ARGS+=(--kda-use-flashkda)
+fi
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS

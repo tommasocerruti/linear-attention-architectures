@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 PKG_DIR=${1:?usage: install_python_deps.sh PKG_DIR}
-MARKER=$PKG_DIR/.deps_installed_v9
+MARKER=$PKG_DIR/.deps_installed_v10
 LOCK=$PKG_DIR/.install.lockdir
 
 mkdir -p "$PKG_DIR"
@@ -14,6 +14,7 @@ import transformers
 import wandb
 from fla.modules.convolution import causal_conv1d
 from fla.modules.l2norm import l2norm
+from fla.ops.kda import chunk_kda
 from fla.ops.delta_rule import chunk_delta_rule
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 PY
@@ -38,8 +39,10 @@ fi
 $INSTALL --upgrade --target="$PKG_DIR" transformers wandb datasets sentencepiece einops
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'causal-conv1d~=1.5' \
-    'fla-core==0.4.2' \
-    'flash-linear-attention==0.4.2'
+    'fla-core==0.5.0' \
+    'flash-linear-attention==0.5.0'
+# FlashKDA is intentionally not installed here by default. When present, KDA can opt into
+# it via --kda-use-flashkda and FLA will dispatch to it on supported hardware/configurations.
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0'
 
@@ -52,6 +55,7 @@ import transformers
 import wandb
 from fla.modules.convolution import causal_conv1d
 from fla.modules.l2norm import l2norm
+from fla.ops.kda import chunk_kda
 from fla.ops.delta_rule import chunk_delta_rule
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule
 PY

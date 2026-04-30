@@ -309,6 +309,10 @@ class TransformerConfig(ModelParallelConfig):
     linear_num_value_heads: Optional[int] = 32
     """Number of value heads for linear attention variants; for gated_delta_net this also sets the gate heads."""
 
+    kda_use_flashkda: bool = False
+    """Whether KDA should allow FLA to dispatch `chunk_kda` to the FlashKDA backend.
+    Defaults to False so KDA stays on FLA's Triton implementation unless explicitly enabled."""
+
     ####################
     # initialization
     ####################
@@ -1106,16 +1110,24 @@ class TransformerConfig(ModelParallelConfig):
                     f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
                     f"linear_num_key_heads ({self.linear_num_key_heads}) for KDA."
                 )
+                if self.sequence_parallel:
+                    raise ValueError(
+                        "KDA multi-GPU training supports DP/TP/CP in this milestone, but "
+                        "--sequence-parallel is not yet supported. Disable "
+                        "--sequence-parallel for --experimental-attention-variant kda."
+                    )
 
             # Check tensor parallelism compatibility
-            tp_cp_size = self.tensor_model_parallel_size * self.context_parallel_size
-            assert self.linear_num_key_heads % tp_cp_size == 0, (
-                f"{self.linear_num_key_heads=} must be a multiple of "
-                f"({self.tensor_model_parallel_size=} * {self.context_parallel_size=})."
+            tp_head_divisor = (
+                self.tensor_model_parallel_size
+                if self.experimental_attention_variant == "kda"
+                else self.tensor_model_parallel_size * self.context_parallel_size
             )
-            assert self.linear_num_value_heads % tp_cp_size == 0, (
-                f"{self.linear_num_value_heads=} must be a multiple of "
-                f"({self.tensor_model_parallel_size=} * {self.context_parallel_size=})."
+            assert self.linear_num_key_heads % tp_head_divisor == 0, (
+                f"{self.linear_num_key_heads=} must be a multiple of {tp_head_divisor=}."
+            )
+            assert self.linear_num_value_heads % tp_head_divisor == 0, (
+                f"{self.linear_num_value_heads=} must be a multiple of {tp_head_divisor=}."
             )
         elif self.experimental_attention_variant == "dsa":
             pass
