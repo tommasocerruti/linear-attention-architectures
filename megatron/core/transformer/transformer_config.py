@@ -262,8 +262,8 @@ class TransformerConfig(ModelParallelConfig):
     ####################
     # attention variant
     ####################
-    experimental_attention_variant: Optional[Literal['gated_delta_net_pytorch', 'gated_delta_net', 'delta_net', 'dsa']] = None
-    """Type of attention variant to use. Currently support gated_delta_net_pytorch, gated_delta_net, delta_net and dsa."""
+    experimental_attention_variant: Optional[Literal['gated_delta_net_pytorch', 'gated_delta_net', 'delta_net', 'kda', 'dsa']] = None
+    """Type of attention variant to use. Currently support gated_delta_net_pytorch, gated_delta_net, delta_net, kda and dsa."""
 
     ####################
     # DSA
@@ -1064,7 +1064,7 @@ class TransformerConfig(ModelParallelConfig):
                 f"tensor_model_parallel_size ({self.tensor_model_parallel_size})."
             )
 
-        if self.experimental_attention_variant in {"gated_delta_net", "delta_net"}:
+        if self.experimental_attention_variant in {"gated_delta_net", "delta_net", "kda"}:
             assert (
                 self.linear_attention_freq is not None
             ), (
@@ -1093,13 +1093,18 @@ class TransformerConfig(ModelParallelConfig):
                     f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
                     f"linear_num_key_heads ({self.linear_num_key_heads})."
                 )
-            else:
+            elif self.experimental_attention_variant == "delta_net":
                 assert self.linear_num_value_heads == self.linear_num_key_heads, (
                     "delta_net currently requires matching q/k and value head counts, got "
                     f"{self.linear_num_key_heads=} and {self.linear_num_value_heads=}."
                 )
                 assert not self.attention_output_gate, (
                     "delta_net does not support --attention-output-gate in this wrapper."
+                )
+            else:
+                assert self.linear_num_value_heads % self.linear_num_key_heads == 0, (
+                    f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
+                    f"linear_num_key_heads ({self.linear_num_key_heads}) for KDA."
                 )
 
             # Check tensor parallelism compatibility
