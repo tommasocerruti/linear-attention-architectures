@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Hybrid Gated DeltaNet ~350M baseline on 1 GH200 node (4 GPUs).
+# Hybrid Gated DeltaNet PyTorch ~350M baseline on 1 GH200 node (4 GPUs).
 # 20L / 1024H / 2816F / 16h / 4kv (GQA), with a 2:1 GDN:SDPA layer pattern.
 # SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
 # 15B tokens on FineWeb-Edu, ~28610 steps at 524K tokens/step.
@@ -8,7 +8,7 @@
 # Requires MEGATRON_DATA_PATH to point at the FineWeb-Edu Megatron prefix
 # produced by _research/data/convert_fineweb_edu.sbatch.
 #
-#SBATCH --job-name=transformer-pp-350m-gdn
+#SBATCH --job-name=transformer-pp-350m-gdn-pytorch
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
 #SBATCH --time=10:00:00
@@ -75,7 +75,7 @@ PP=1
 CP=${CP:-1}
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn-$(git rev-parse --short HEAD)}
+EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn-pytorch-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
     TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
@@ -96,8 +96,8 @@ fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
-export APERTUS_FEATURE=gated-deltanet
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn}
+export APERTUS_FEATURE=gated-deltanet-pytorch
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn-pytorch}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -126,7 +126,7 @@ NETWORK_SIZE_ARGS=(
 )
 
 GDN_ARGS=(
-    --experimental-attention-variant gated_delta_net
+    --experimental-attention-variant gated_delta_net_pytorch
     --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
     --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
     --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
@@ -235,7 +235,7 @@ MEGATRON_ARGS="\
     ${DATA_ARGS[@]}"
 
 export WANDB_ARCH=gdn
-export WANDB_KERNEL=triton
+export WANDB_KERNEL=torch
 export WANDB_OPTIMIZER=adamw
 export WANDB_MODEL_SIZE=350M
 export WANDB_SEQ_LEN=$SEQ_LEN

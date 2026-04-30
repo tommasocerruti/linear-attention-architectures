@@ -49,6 +49,7 @@ export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
 export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
 
 mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACHE_DIR $PACKAGE_DIR _research/results/runs _research/results/performance
@@ -62,9 +63,9 @@ FFN_HIDDEN=${FFN_HIDDEN:-2816}
 NUM_HEADS=${NUM_HEADS:-16}
 NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
-MBS=16
-GBS=128
-SEQ_LEN=4096
+MBS=${MBS:-16}
+GBS=${GBS:-128}
+SEQ_LEN=${SEQ_LEN:-4096}
 TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
 TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
@@ -73,7 +74,7 @@ MIN_LR=${MIN_LR:-3e-5}
 
 TP=1
 PP=1
-CP=1
+CP=${CP:-1}
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
 EXP_NAME=${EXP_NAME:-transformer-pp-350m-deltanet-$(git rev-parse --short HEAD)}
@@ -220,9 +221,26 @@ MEGATRON_ARGS="\
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
+    ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
+
+RECOMPUTE_ARGS=()
+if [ "${RECOMPUTE:-0}" = "1" ]; then
+    RECOMPUTE_ARGS=(
+        --recompute-granularity full
+        --recompute-method uniform
+        --recompute-num-layers $NUM_LAYERS
+    )
+fi
+
+export WANDB_ARCH=dn
+export WANDB_KERNEL=triton
+export WANDB_OPTIMIZER=adamw
+export WANDB_MODEL_SIZE=350M
+export WANDB_SEQ_LEN=$SEQ_LEN
+export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT

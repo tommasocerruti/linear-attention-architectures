@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# Short AdamW runtime smoke for the FineWeb-Edu/LLaMA-2 path.
-# Reuses the full 350M AdamW launcher with a small stopping condition.
+# Short Muon runtime smoke for the FineWeb-Edu/LLaMA-2 path.
+# Reuses the full 350M Muon launcher with a small stopping condition.
 #
-#SBATCH --job-name=transformer-pp-350m-adamw-smoke
+#SBATCH --job-name=transformer-pp-350m-muon-smoke
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=debug
 #SBATCH --time=00:45:00
@@ -33,7 +33,7 @@ export RECOMPUTE=${RECOMPUTE:-0}
 export CP=${CP:-1}
 export WANDB_IS_SMOKE=1
 GIT_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
-export EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-smoke-$GIT_SHA}
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-edu-smoke}
+export EXP_NAME=${EXP_NAME:-transformer-pp-350m-muon-smoke-$GIT_SHA}
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-muon-smoke}
 
-exec bash "$SCRIPT_DIR/transformer-pp-350m-adamw.sbatch"
+exec bash "$SCRIPT_DIR/transformer-pp-350m-muon.sbatch"

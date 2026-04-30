@@ -262,8 +262,8 @@ class TransformerConfig(ModelParallelConfig):
     ####################
     # attention variant
     ####################
-    experimental_attention_variant: Optional[Literal['gated_delta_net', 'delta_net', 'dsa']] = None
-    """Type of attention variant to use. Currently support gated_delta_net, delta_net and dsa."""
+    experimental_attention_variant: Optional[Literal['gated_delta_net_pytorch', 'gated_delta_net', 'delta_net', 'dsa']] = None
+    """Type of attention variant to use. Currently support gated_delta_net_pytorch, gated_delta_net, delta_net and dsa."""
 
     ####################
     # DSA

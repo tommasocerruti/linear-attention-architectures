@@ -13,7 +13,9 @@ wandb/
 onelogger.log
 onelogger.err
 .venv
-_research/results/runs/
+_research/results/
+_research/packages/
+cache/
 /test_cases/
 **/dist/
 

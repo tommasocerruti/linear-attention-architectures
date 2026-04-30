@@ -1,100 +1,103 @@
 #!/bin/bash
 #
-# Transformer++ 350M baseline on 1 GH200 node (4 GPUs).
-# 24L / 1024H / 2560F / 16h / 4kv (GQA).
-# SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
-# 15B tokens on FineWeb-Edu, ~28610 steps at 524K tokens/step.
+# Quick 1-GPU Gated DeltaNetPytorch hybrid on GPT-2-tokenized ClimbMix.
+# Intended for short engineering comparisons against the softmax baseline.
 #
-#SBATCH --job-name=transformer-pp-350m-adamw
+# Default dataset prefix:
+#   /capstor/store/cscs/swissai/infra01/datasets/nvidia/Nemotron-ClimbMix/climbmix_small_megatron/climbmix_small
+#
+# Override by exporting MEGATRON_DATA_PATH to a different Megatron-binary prefix
+# without the .bin/.idx suffix.
+#
+#SBATCH --job-name=quick-gdn-1gpu-climbmix
 #SBATCH --account=lsaie-ss26
-#SBATCH --partition=normal
-#SBATCH --time=10:00:00
+#SBATCH --partition=debug
+#SBATCH --time=00:30:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
-#SBATCH --gpus-per-node=4
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH --mem=460000
+#SBATCH --mem=115000
 #SBATCH --no-requeue
 
 set -euo pipefail
-: "${MEGATRON_DATA_PATH:?please set MEGATRON_DATA_PATH to the FineWeb-Edu Megatron-binary dataset prefix (without .bin/.idx), e.g. /path/to/fineweb_edu_15b_llama2_text_document}"
-: "${LLAMA2_TOKENIZER_MODEL:?please set LLAMA2_TOKENIZER_MODEL to a local LLaMA-2 tokenizer.model path}"
-if [ ! -f "$LLAMA2_TOKENIZER_MODEL" ]; then
-    echo "ERROR: tokenizer model not found: $LLAMA2_TOKENIZER_MODEL" >&2
+
+DEFAULT_MEGATRON_DATA_PATH=/capstor/store/cscs/swissai/infra01/datasets/nvidia/Nemotron-ClimbMix/climbmix_small_megatron/climbmix_small
+MEGATRON_DATA_PATH=${MEGATRON_DATA_PATH:-$DEFAULT_MEGATRON_DATA_PATH}
+if [ ! -f "${MEGATRON_DATA_PATH}.idx" ] || [ ! -f "${MEGATRON_DATA_PATH}.bin" ]; then
+    echo "ERROR: dataset prefix not found: $MEGATRON_DATA_PATH" >&2
     exit 1
 fi
+
 echo "START TIME: $(date)"
+echo "MEGATRON_DATA_PATH: $MEGATRON_DATA_PATH"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
-REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
-cd $WORKDIR
+SCRIPT_PATH=$(scontrol show job "$SLURM_JOB_ID" -o | sed -n 's/.* Command=\([^ ]*\).*/\1/p')
+if [ -n "$SCRIPT_PATH" ]; then
+    REPO_DIR=$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)
+else
+    REPO_DIR=${CLER_REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}
+fi
+WORKDIR=$REPO_DIR
+SCRATCH_ROOT=${SCRATCH:-/iopsstor/scratch/cscs/$USER}
+SCRATCH_REPO_DIR=$SCRATCH_ROOT/cler
+PACKAGE_DIR=$SCRATCH_REPO_DIR/_research/packages
+DATASET_CACHE_DIR=$SCRATCH_REPO_DIR/cache/dataset
+TMP_CACHE_DIR=$SCRATCH_REPO_DIR/cache/tmp
 
-PACKAGE_DIR=$REPO_DIR/_research/packages
-DATASET_CACHE_DIR=$REPO_DIR/cache/dataset
-TMP_CACHE_DIR=$REPO_DIR/cache/tmp
+cd $WORKDIR
 
 export PYTHONPATH=$WORKDIR:$PACKAGE_DIR:$WORKDIR${PYTHONPATH:+:$PYTHONPATH}
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_CPP_LOG_LEVEL=WARNING
-export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
-export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
+export TRITON_CACHE_DIR=$SCRATCH_REPO_DIR/cache/triton
+export TORCHINDUCTOR_CACHE_DIR=$SCRATCH_REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
 
-mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACHE_DIR $PACKAGE_DIR _research/results/runs _research/results/performance
+mkdir -p \
+    $PACKAGE_DIR \
+    $DATASET_CACHE_DIR \
+    $TMP_CACHE_DIR \
+    $TRITON_CACHE_DIR \
+    $TORCHINDUCTOR_CACHE_DIR \
+    $SCRATCH_REPO_DIR/_research/results/runs \
+    $SCRATCH_REPO_DIR/_research/results/performance \
+    $WORKDIR/_research/results/runs
 
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)
 MASTER_PORT=25678
 
-NUM_LAYERS=${NUM_LAYERS:-24}
-HIDDEN=${HIDDEN:-1024}
-FFN_HIDDEN=${FFN_HIDDEN:-2560}
-NUM_HEADS=${NUM_HEADS:-16}
-NUM_KV_HEADS=${NUM_KV_HEADS:-4}
+NUM_LAYERS=6
+HIDDEN=512
+FFN_HIDDEN=1408
+NUM_HEADS=8
+NUM_KV_HEADS=2
 
-MBS=${MBS:-16}
-GBS=${GBS:-128}
-SEQ_LEN=${SEQ_LEN:-4096}
-TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
-TRAIN_ITERS=${TRAIN_ITERS:-}
-EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
+MBS=4
+GBS=8
+SEQ_LEN=1024
+TRAIN_ITERS=200
+EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-40}
 LR=3e-4
-MIN_LR=${MIN_LR:-3e-5}
+MIN_LR=3e-5
 
 TP=1
 PP=1
-CP=${CP:-1}
+CP=1
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-$(git rev-parse --short HEAD)}
+GIT_SHORT_HASH=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)
+EXP_NAME=${EXP_NAME:-quick-gdn-1gpu-climbmix-$GIT_SHORT_HASH}
 
-if [ -n "$TRAIN_ITERS" ]; then
-    TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
-    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_ITERS}
-    LR_DURATION_ARGS=(
-        --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
-        --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
-        --lr-wsd-decay-iters ${LR_WSD_DECAY_ITERS:-10}
-    )
-else
-    TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
-    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_SAMPLES}
-    LR_DURATION_ARGS=(
-        --lr-warmup-samples 25600
-        --lr-wsd-decay-samples 732422
-    )
-fi
-EVAL_ITERS=${EVAL_ITERS:-0}
-
-export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
-export APERTUS_FEATURE=transformer-pp
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-edu}
+export APERTUS_LOG_DIR=$SCRATCH_REPO_DIR/_research/results/performance
+export APERTUS_FEATURE=gated-deltanet-pytorch
+export APERTUS_TRACK=${APERTUS_TRACK:-quick-climbmix-1gpu}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -118,23 +121,36 @@ NETWORK_SIZE_ARGS=(
     --normalization RMSNorm
     --swiglu
     --untie-embeddings-and-output-weights
-    --attention-backend auto
+    --attention-backend auto --deterministic-mode
     --seq-length $SEQ_LEN
+)
+
+GDN_ARGS=(
+    --experimental-attention-variant gated_delta_net_pytorch
+    --linear-attention-freq 3
+    --linear-conv-kernel-dim 4
+    --linear-key-head-dim 64
+    --linear-value-head-dim 64
+    --linear-num-key-heads 4
+    --linear-num-value-heads 8
+    --apply-layernorm-1p
+    --apply-wd-to-qk-layernorm
+    --attention-output-gate
 )
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS
     --global-batch-size $GBS
-    ${TRAIN_STOP_ARGS[@]}
+    --train-iters $TRAIN_ITERS
     --exit-duration-in-mins $EXIT_DURATION_IN_MINS
     --log-interval 1
-    --eval-interval $EVAL_INTERVAL
-    --eval-iters $EVAL_ITERS
+    --eval-interval $TRAIN_ITERS
+    --eval-iters 0
     --optimizer adam
     --dataloader-type single
     --manual-gc
     --manual-gc-interval 50
-    --cross-entropy-loss-fusion
+    
     --disable-bias-linear
     --no-check-for-nan-in-loss-and-grad
 )
@@ -151,9 +167,9 @@ REGULARIZATION_ARGS=(
 LEARNING_RATE_ARGS=(
     --lr $LR
     --min-lr $MIN_LR
-    --lr-decay-style WSD
-    --lr-wsd-decay-style minus_sqrt
-    ${LR_DURATION_ARGS[@]}
+    --lr-decay-style cosine
+    --lr-warmup-iters 20
+    --lr-decay-iters $TRAIN_ITERS
 )
 
 INITIALIZATION_ARGS=(
@@ -169,9 +185,6 @@ DISTRIBUTED_ARGS=(
     --tensor-model-parallel-size $TP
     --pipeline-model-parallel-size $PP
     --context-parallel-size $CP
-    --use-distributed-optimizer
-    --overlap-grad-reduce
-    --sequence-parallel
 )
 
 LOGGING_ARGS=(
@@ -179,14 +192,15 @@ LOGGING_ARGS=(
     --log-progress
     --log-memory-to-tensorboard
     --log-params-norm
-    --tensorboard-dir $WORKDIR/_research/results/runs/tb-$SLURM_JOB_ID
+    --tensorboard-dir $SCRATCH_REPO_DIR/_research/results/runs/tb-$SLURM_JOB_ID
     --tensorboard-log-interval 1
     --log-timers-to-tensorboard
 )
 
 TOKENIZER_ARGS=(
-    --tokenizer-type Llama2Tokenizer
-    --tokenizer-model "$LLAMA2_TOKENIZER_MODEL"
+    --tokenizer-type GPT2BPETokenizer
+    --vocab-file $WORKDIR/_research/data/gpt2-vocab.json
+    --merge-file $WORKDIR/_research/data/gpt2-merges.txt
 )
 
 DATA_ARGS=(
@@ -196,40 +210,24 @@ DATA_ARGS=(
     --num-workers 4
 )
 
-RECOMPUTE_ARGS=()
-if [ "${RECOMPUTE:-0}" = "1" ]; then
-    RECOMPUTE_ARGS=(
-        --recompute-granularity full
-        --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
-    )
-fi
-
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
+    ${GDN_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
-    ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
 
-export WANDB_ARCH=softmax
-export WANDB_KERNEL=triton
-export WANDB_OPTIMIZER=adamw
-export WANDB_MODEL_SIZE=350M
-export WANDB_SEQ_LEN=$SEQ_LEN
-export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
-
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
-    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
+    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $SCRATCH_REPO_DIR/_research/results/runs"
 else
     export WANDB_MODE=disabled
 fi

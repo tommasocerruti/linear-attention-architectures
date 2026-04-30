@@ -236,12 +236,23 @@ def _set_wandb_writer(args):
         else:
             # Defaults to the save dir.
             save_dir = os.path.join(args.save, 'wandb')
-        wandb_config = vars(args)
+        wandb_config = vars(args).copy()
         if 'kitchen_config_file' in wandb_config and wandb_config['kitchen_config_file'] is not None:
             # Log the contents of the config for discovery of what the quantization
             # settings were.
             with open(wandb_config['kitchen_config_file'], "r") as f:
                 wandb_config['kitchen_config_file_contents'] = f.read()
+        wandb_config.update({
+            k: v for k, v in {
+                'thesis':       os.environ.get('WANDB_THESIS'),
+                'model_size':   os.environ.get('WANDB_MODEL_SIZE'),
+                'optimizer':    os.environ.get('WANDB_OPTIMIZER'),
+                'architecture': os.environ.get('WANDB_ARCH'),
+                'kernel':       os.environ.get('WANDB_KERNEL'),
+                'seq_len':      int(os.environ['WANDB_SEQ_LEN']) if os.environ.get('WANDB_SEQ_LEN') else None,
+                'is_smoke':     os.environ.get('WANDB_IS_SMOKE', '').lower() in ('1', 'true'),
+            }.items() if v is not None
+        })
         wandb_kwargs = {
             'dir': save_dir,
             'name': args.wandb_exp_name,
@@ -249,6 +260,8 @@ def _set_wandb_writer(args):
             'config': wandb_config}
         if args.wandb_entity:
             wandb_kwargs['entity'] = args.wandb_entity
+        if os.environ.get('WANDB_GROUP'):
+            wandb_kwargs['group'] = os.environ['WANDB_GROUP']
         os.makedirs(wandb_kwargs['dir'], exist_ok=True)
         wandb.init(**wandb_kwargs)
         _GLOBAL_WANDB_WRITER = wandb
