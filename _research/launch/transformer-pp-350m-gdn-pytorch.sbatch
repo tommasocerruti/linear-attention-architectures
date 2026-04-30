@@ -96,7 +96,7 @@ fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
-export APERTUS_FEATURE=gated-deltanet-pytorch
+export APERTUS_FEATURE=${APERTUS_FEATURE:-gated-deltanet-pytorch}
 export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn-pytorch}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
@@ -135,6 +135,17 @@ GDN_ARGS=(
     --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
     --attention-output-gate
 )
+
+CLER_ARGS=()
+if [ "${CLER_ENABLED:-0}" = "1" ]; then
+    CLER_ARGS=(
+        --cler-enabled
+        --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+    )
+    if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-detach-residual)
+    fi
+fi
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS
@@ -223,6 +234,7 @@ MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${GDN_ARGS[@]} \
+    ${CLER_ARGS[@]+"${CLER_ARGS[@]}"} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
@@ -234,12 +246,15 @@ MEGATRON_ARGS="\
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
 
-export WANDB_ARCH=gdn
-export WANDB_KERNEL=torch
-export WANDB_OPTIMIZER=adamw
-export WANDB_MODEL_SIZE=350M
+export WANDB_ARCH=${WANDB_ARCH:-gdn}
+export WANDB_KERNEL=${WANDB_KERNEL:-torch}
+export WANDB_OPTIMIZER=${WANDB_OPTIMIZER:-adamw}
+export WANDB_MODEL_SIZE=${WANDB_MODEL_SIZE:-350M}
 export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
+export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
+export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
+export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT

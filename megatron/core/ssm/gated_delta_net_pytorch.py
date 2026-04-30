@@ -202,6 +202,18 @@ class GatedDeltaNet(MegatronModule):
             self.gated_delta_rule = torch_chunk_gated_delta_rule
         else:
             self.gated_delta_rule = chunk_gated_delta_rule
+        self.supports_cler = True
+        self.cler_residual = None
+        if self.config.cler_enabled:
+            self.cler_gamma = nn.Parameter(
+                torch.tensor(
+                    self.config.cler_gamma_init,
+                    dtype=config.params_dtype,
+                    device=torch.cuda.current_device(),
+                )
+            )
+        else:
+            self.register_parameter("cler_gamma", None)
 
         # Output layernorm before projection
         self.out_norm = build_module(
@@ -279,6 +291,8 @@ class GatedDeltaNet(MegatronModule):
         # TODO: Deal with attention_mask
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
+        cler_residual = kwargs.pop("cler_residual", None)
+        self.cler_residual = None
 
         seq_len, batch, _ = hidden_states.shape
         seq_len = seq_len * self.sp_size * self.cp_size
@@ -391,6 +405,16 @@ class GatedDeltaNet(MegatronModule):
         )
         nvtx_range_pop(suffix="prepare_qkv_for_gated_delta_rule")
 
+        if self.config.cler_enabled and cler_residual is not None:
+            if self.config.cler_detach_residual:
+                cler_residual = cler_residual.detach()
+            if cler_residual.shape != value.shape:
+                raise ValueError(
+                    "CLER residual shape must match the current GDN value shape, "
+                    f"got {cler_residual.shape=} and {value.shape=}."
+                )
+            value = value + self.cler_gamma.to(dtype=value.dtype) * cler_residual
+
         # Calculate g and beta
         nvtx_range_push(suffix="g_and_beta")
         A_log_local_cp = get_parameter_local_cp(self.A_log, dim=0, cp_group=self.pg_collection.cp)
@@ -401,16 +425,29 @@ class GatedDeltaNet(MegatronModule):
         nvtx_range_pop(suffix="g_and_beta")
 
         nvtx_range_push(suffix="gated_delta_rule")
-        core_attn_out, last_recurrent_state = self.gated_delta_rule(
-            query,
-            key,
-            value,
-            g=g,
-            beta=beta,
-            initial_state=None,
-            output_final_state=False,
-            use_qk_l2norm_in_kernel=False,
-        )
+        if self.config.cler_enabled:
+            core_attn_out, last_recurrent_state, self.cler_residual = self.gated_delta_rule(
+                query,
+                key,
+                value,
+                g=g,
+                beta=beta,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+                return_residual=True,
+            )
+        else:
+            core_attn_out, last_recurrent_state = self.gated_delta_rule(
+                query,
+                key,
+                value,
+                g=g,
+                beta=beta,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+            )
         nvtx_range_pop(suffix="gated_delta_rule")
 
         # RMSNorm
@@ -847,6 +884,7 @@ def torch_chunk_gated_delta_rule(
     initial_state=None,
     output_final_state=False,
     use_qk_l2norm_in_kernel=False,
+    return_residual=False,
 ):
     # pylint: disable=line-too-long
     '''
@@ -905,6 +943,7 @@ def torch_chunk_gated_delta_rule(
         else initial_state.to(value)
     )
     core_attn_out = torch.zeros_like(value)
+    residual_out = torch.zeros_like(value) if return_residual else None
     mask = torch.triu(
         torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1
     )
@@ -915,6 +954,8 @@ def torch_chunk_gated_delta_rule(
         attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
         v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
         v_new = v_i - v_prime
+        if return_residual:
+            residual_out[:, :, i] = v_new
         attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
         core_attn_out[:, :, i] = attn_inter + attn @ v_new
         last_recurrent_state = (
@@ -929,4 +970,11 @@ def torch_chunk_gated_delta_rule(
     )
     core_attn_out = core_attn_out[:, :, :sequence_length]
     core_attn_out = core_attn_out.transpose(1, 2).contiguous().to(initial_dtype)
+    if return_residual:
+        residual_out = residual_out.reshape(
+            residual_out.shape[0], residual_out.shape[1], -1, residual_out.shape[-1]
+        )
+        residual_out = residual_out[:, :, :sequence_length]
+        residual_out = residual_out.transpose(1, 2).contiguous().to(initial_dtype)
+        return core_attn_out, last_recurrent_state, residual_out
     return core_attn_out, last_recurrent_state
