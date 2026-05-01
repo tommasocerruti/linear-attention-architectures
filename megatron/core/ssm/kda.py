@@ -45,6 +45,11 @@ except ImportError:
     chunk_kda = None
     HAVE_FLA = False
 
+try:
+    from fla.layers.kda import KimiDeltaAttention as FLAKimiDeltaAttention
+except ImportError:
+    FLAKimiDeltaAttention = None
+
 
 @dataclass
 class KimiDeltaAttentionSubmodules:
@@ -104,6 +109,7 @@ class KimiDeltaAttention(MegatronModule):
 
         self.hidden_size = config.hidden_size
         self.kda_use_flashkda = config.kda_use_flashkda
+        self.kda_use_fla_wrapper = config.kda_use_fla_wrapper
         self.conv_kernel_dim = config.linear_conv_kernel_dim
         self.key_head_dim = config.linear_key_head_dim
         self.value_head_dim = config.linear_value_head_dim
@@ -131,6 +137,35 @@ class KimiDeltaAttention(MegatronModule):
             assert self.in_proj_dim % fp8_align_size == 0, (
                 "For FP8, the KDA input projection output tensor must be a multiple of 16."
             )
+
+        if self.kda_use_fla_wrapper:
+            if FLAKimiDeltaAttention is None:
+                raise ImportError(
+                    "fla.layers.kda.KimiDeltaAttention is not available. Install "
+                    "flash-linear-attention>=0.5.0 to use --kda-use-fla-wrapper."
+                )
+            if self.tp_size != 1 or self.cp_size != 1:
+                raise ValueError(
+                    "--kda-use-fla-wrapper is only for 1-GPU comparison runs and requires "
+                    "tensor_model_parallel_size=1 and context_parallel_size=1."
+                )
+
+            self.fla_layer = FLAKimiDeltaAttention(
+                hidden_size=self.hidden_size,
+                expand_v=self.value_head_dim / self.key_head_dim,
+                head_dim=self.key_head_dim,
+                num_heads=self.num_key_heads,
+                num_v_heads=self.num_value_heads,
+                mode="chunk",
+                use_short_conv=True,
+                conv_size=self.conv_kernel_dim,
+                conv_bias=conv_bias,
+                layer_idx=(layer_number - 1 if layer_number is not None else None),
+                norm_eps=self.config.layernorm_epsilon,
+            )
+            self._move_fla_wrapper_parameters()
+            self._reset_fla_wrapper_parameters()
+            return
 
         self.in_proj = build_module(
             submodules.in_proj,
@@ -293,6 +328,12 @@ class KimiDeltaAttention(MegatronModule):
         if sequence_len_offset is not None:
             raise NotImplementedError("KDA does not support CUDA-graph sequence offsets yet.")
 
+        if self.kda_use_fla_wrapper:
+            hidden_states = hidden_states.transpose(0, 1).contiguous()
+            with self._flashkda_dispatch():
+                output, _, _ = self.fla_layer(hidden_states, attention_mask=None)
+            return output.transpose(0, 1).contiguous(), None
+
         if self.cp_size > 1:
             hidden_states = _undo_attention_load_balancing(hidden_states, self.cp_size)
 
@@ -391,6 +432,11 @@ class KimiDeltaAttention(MegatronModule):
         return out, out_bias
 
     def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None, tp_group=None):
+        if self.kda_use_fla_wrapper:
+            return sharded_state_dict_default(
+                self.fla_layer, f"{prefix}fla_layer.", sharded_offsets, metadata, tp_group=tp_group
+            )
+
         metadata = ensure_metadata_has_dp_cp_group(metadata)
 
         sharded_state_dict = {}
@@ -463,10 +509,69 @@ class KimiDeltaAttention(MegatronModule):
         return sharded_state_dict
 
     def backward_dw(self):
+        if self.kda_use_fla_wrapper:
+            return
+
         self.out_proj.backward_dw()
         self.g_out_proj.backward_dw()
         self.f_out_proj.backward_dw()
         self.in_proj.backward_dw()
+
+    def _move_fla_wrapper_parameters(self):
+        device = (
+            None
+            if self.config.use_cpu_initialization
+            else torch.device("cuda", torch.cuda.current_device())
+        )
+
+        for name, param in self.fla_layer.named_parameters():
+            dtype = torch.float32 if name.endswith(("A_log", "dt_bias")) else self.config.params_dtype
+            kwargs = {"dtype": dtype}
+            if device is not None:
+                kwargs["device"] = device
+            param.data = param.data.to(**kwargs)
+
+        for _, buffer in self.fla_layer.named_buffers():
+            kwargs = {"dtype": buffer.dtype}
+            if device is not None:
+                kwargs["device"] = device
+            buffer.data = buffer.data.to(**kwargs)
+
+    def _reset_fla_wrapper_parameters(self):
+        if not self.config.perform_initialization:
+            return
+
+        with get_cuda_rng_tracker().fork():
+            self.config.init_method(self.fla_layer.q_proj.weight)
+            self.config.init_method(self.fla_layer.k_proj.weight)
+            self.config.init_method(self.fla_layer.v_proj.weight)
+            self.config.init_method(self.fla_layer.b_proj.weight)
+            self.config.init_method(self.fla_layer.f_proj[0].weight)
+            self.config.init_method(self.fla_layer.f_proj[1].weight)
+            self.config.init_method(self.fla_layer.g_proj[0].weight)
+            self.config.init_method(self.fla_layer.g_proj[1].weight)
+            if self.fla_layer.g_proj[1].bias is not None:
+                nn.init.zeros_(self.fla_layer.g_proj[1].bias)
+            self.config.output_layer_init_method(self.fla_layer.o_proj.weight)
+
+            A = torch.empty(
+                self.num_value_heads,
+                dtype=torch.float32,
+                device=self.fla_layer.A_log.device,
+            ).uniform_(*self.A_init_range)
+            self.fla_layer.A_log.data.copy_(torch.log(A))
+
+            dt = torch.exp(
+                torch.rand(
+                    self.gate_dim,
+                    dtype=torch.float32,
+                    device=self.fla_layer.dt_bias.device,
+                )
+                * (math.log(0.1) - math.log(0.001))
+                + math.log(0.001)
+            ).clamp_(min=1e-4)
+            inv_dt = dt + torch.log(-torch.expm1(-dt))
+            self.fla_layer.dt_bias.data.copy_(inv_dt)
 
     @contextmanager
     def _flashkda_dispatch(self):

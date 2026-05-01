@@ -313,6 +313,10 @@ class TransformerConfig(ModelParallelConfig):
     """Whether KDA should allow FLA to dispatch `chunk_kda` to the FlashKDA backend.
     Defaults to False so KDA stays on FLA's Triton implementation unless explicitly enabled."""
 
+    kda_use_fla_wrapper: bool = False
+    """Whether KDA should use the full upstream FLA KimiDeltaAttention layer.
+    Intended only for 1-GPU loss comparison against the Megatron-native KDA implementation."""
+
     ####################
     # initialization
     ####################
@@ -1115,6 +1119,13 @@ class TransformerConfig(ModelParallelConfig):
                         "KDA multi-GPU training supports DP/TP/CP in this milestone, but "
                         "--sequence-parallel is not yet supported. Disable "
                         "--sequence-parallel for --experimental-attention-variant kda."
+                    )
+                if self.kda_use_fla_wrapper and (
+                    self.tensor_model_parallel_size != 1 or self.context_parallel_size != 1
+                ):
+                    raise ValueError(
+                        "--kda-use-fla-wrapper is only for 1-GPU comparison runs and requires "
+                        "tensor_model_parallel_size=1 and context_parallel_size=1."
                     )
 
             # Check tensor parallelism compatibility

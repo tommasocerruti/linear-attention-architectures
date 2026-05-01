@@ -95,13 +95,19 @@ PP=1
 CP=1
 # Set KDA_USE_FLASHKDA=1 to let FLA try the FlashKDA backend. Default stays on Triton.
 KDA_USE_FLASHKDA=${KDA_USE_FLASHKDA:-0}
+KDA_USE_FLA_WRAPPER=${KDA_USE_FLA_WRAPPER:-0}
+
+KDA_IMPL_NAME=kda
+if [ "$KDA_USE_FLA_WRAPPER" = "1" ]; then
+    KDA_IMPL_NAME=kda-fla-wrapper
+fi
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
 GIT_SHORT_HASH=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)
-EXP_NAME=${EXP_NAME:-quick-kda-1gpu-climbmix-$GIT_SHORT_HASH}
+EXP_NAME=${EXP_NAME:-quick-$KDA_IMPL_NAME-1gpu-climbmix-$GIT_SHORT_HASH}
 
 export APERTUS_LOG_DIR=$SCRATCH_REPO_DIR/_research/results/performance
-export APERTUS_FEATURE=kda
+export APERTUS_FEATURE=$KDA_IMPL_NAME
 export APERTUS_TRACK=${APERTUS_TRACK:-quick-kda-1gpu}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
@@ -141,6 +147,9 @@ KDA_ARGS=(
 )
 if [ "$KDA_USE_FLASHKDA" = "1" ]; then
     KDA_ARGS+=(--kda-use-flashkda)
+fi
+if [ "$KDA_USE_FLA_WRAPPER" = "1" ]; then
+    KDA_ARGS+=(--kda-use-fla-wrapper)
 fi
 
 TRAINING_ARGS=(

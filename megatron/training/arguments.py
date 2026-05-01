@@ -3248,6 +3248,13 @@ def _add_experimental_attention_variant_args(parser):
         help='Allow KDA to let flash-linear-attention dispatch chunk_kda to FlashKDA when the '
              'installed backend and hardware support it. By default KDA forces the Triton path.',
     )
+    group.add_argument(
+        '--kda-use-fla-wrapper',
+        action='store_true',
+        default=False,
+        help='Use the full upstream fla.layers.kda.KimiDeltaAttention module for KDA layers. '
+             'This is intended for 1-GPU loss comparison against the Megatron-native KDA path.',
+    )
     return parser
 
 def _add_heterogeneous_args(parser):
