@@ -1,0 +1,189 @@
+START TIME: Tue Apr 28 05:03:09 CEST 2026
+CMD: set -euo pipefail;     cd /iopsstor/scratch/cscs/course_00206/cler;     export PYTHONPATH=/iopsstor/scratch/cscs/course_00206/cler:/iopsstor/scratch/cscs/course_00206/cler/_research/packages:/iopsstor/scratch/cscs/course_00206/cler${PYTHONPATH:+:$PYTHONPATH};     export HF_HOME=/iopsstor/scratch/cscs/course_00206/cler/cache/huggingface;     export HF_DATASETS_CACHE=/iopsstor/scratch/cscs/course_00206/cler/cache/huggingface/datasets;     export TMPDIR=/iopsstor/scratch/cscs/course_00206/cler/cache/tmp;     export OMP_NUM_THREADS=72;     bash /iopsstor/scratch/cscs/course_00206/cler/_research/launch/install_python_deps.sh /iopsstor/scratch/cscs/course_00206/cler/_research/packages;     set +e;     python3 /iopsstor/scratch/cscs/course_00206/cler/_research/data/prepare_fineweb_edu.py         --dataset HuggingFaceFW/fineweb_edu_100BT-shuffled         --split train         --target-tokens 1000000000         --token-count-key ''         --sentencepiece-tokenizer-model /iopsstor/scratch/cscs/course_00206/llama2-tokenizer/tokenizer.model         --output /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2.jsonl         ;     PREPARE_STATUS=$?;     set -e;     if [ $PREPARE_STATUS -ne 0 ]; then         python3 -c 'import json, pathlib, sys; manifest = pathlib.Path(sys.argv[1]); data = json.loads(manifest.read_text()) if manifest.exists() else {}; sys.exit(0 if data.get("status") == "complete" else 1)' /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2.jsonl.manifest.json || exit $PREPARE_STATUS;         echo 'prepare_fineweb_edu.py exited non-zero after writing a complete manifest; continuing to preprocessing.';     fi;     python3 /iopsstor/scratch/cscs/course_00206/cler/tools/preprocess_data.py         --input /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2.jsonl         --output-prefix /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2         --tokenizer-type Llama2Tokenizer         --tokenizer-model /iopsstor/scratch/cscs/course_00206/llama2-tokenizer/tokenizer.model         --append-eod         --workers 64         --log-interval 10000
+0: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+0: [  1.20%] docs=10,000 tokens=11,958,501 docs/s=454.5
+0: [  2.39%] docs=20,000 tokens=23,899,591 docs/s=473.0
+0: [  3.59%] docs=30,000 tokens=35,858,785 docs/s=483.3
+0: [  4.78%] docs=40,000 tokens=47,832,363 docs/s=487.7
+0: [  5.98%] docs=50,000 tokens=59,819,524 docs/s=489.3
+0: [  7.16%] docs=60,000 tokens=71,635,219 docs/s=493.1
+0: [  8.38%] docs=70,000 tokens=83,788,645 docs/s=493.5
+0: [  9.57%] docs=80,000 tokens=95,653,435 docs/s=494.9
+0: [ 10.75%] docs=90,000 tokens=107,498,570 docs/s=496.9
+0: [ 11.91%] docs=100,000 tokens=119,079,004 docs/s=499.2
+0: [ 13.10%] docs=110,000 tokens=131,019,427 docs/s=500.0
+0: [ 14.27%] docs=120,000 tokens=142,716,726 docs/s=501.3
+0: [ 15.48%] docs=130,000 tokens=154,775,684 docs/s=500.8
+0: [ 16.69%] docs=140,000 tokens=166,861,257 docs/s=500.7
+0: [ 17.85%] docs=150,000 tokens=178,516,297 docs/s=501.6
+0: [ 19.06%] docs=160,000 tokens=190,602,365 docs/s=501.3
+0: [ 20.22%] docs=170,000 tokens=202,160,833 docs/s=502.6
+0: [ 21.39%] docs=180,000 tokens=213,870,342 docs/s=503.4
+0: [ 22.55%] docs=190,000 tokens=225,532,613 docs/s=503.9
+0: [ 23.75%] docs=200,000 tokens=237,539,541 docs/s=502.7
+0: [ 24.94%] docs=210,000 tokens=249,407,181 docs/s=502.5
+0: [ 26.12%] docs=220,000 tokens=261,229,095 docs/s=503.0
+0: [ 27.28%] docs=230,000 tokens=272,787,071 docs/s=503.9
+0: [ 28.45%] docs=240,000 tokens=284,522,508 docs/s=504.5
+0: [ 29.65%] docs=250,000 tokens=296,490,026 docs/s=504.7
+0: [ 30.82%] docs=260,000 tokens=308,189,662 docs/s=505.3
+0: [ 31.98%] docs=270,000 tokens=319,837,407 docs/s=505.9
+0: [ 33.16%] docs=280,000 tokens=331,602,495 docs/s=506.1
+0: [ 34.37%] docs=290,000 tokens=343,662,800 docs/s=505.9
+0: [ 35.58%] docs=300,000 tokens=355,763,395 docs/s=505.6
+0: [ 36.77%] docs=310,000 tokens=367,688,379 docs/s=505.6
+0: [ 37.98%] docs=320,000 tokens=379,822,240 docs/s=505.4
+0: [ 39.17%] docs=330,000 tokens=391,699,061 docs/s=505.6
+0: [ 40.37%] docs=340,000 tokens=403,656,876 docs/s=505.5
+0: [ 41.55%] docs=350,000 tokens=415,476,574 docs/s=505.6
+0: [ 42.79%] docs=360,000 tokens=427,915,415 docs/s=504.9
+0: [ 43.98%] docs=370,000 tokens=439,839,945 docs/s=504.8
+0: [ 45.15%] docs=380,000 tokens=451,522,848 docs/s=505.2
+0: [ 46.36%] docs=390,000 tokens=463,600,072 docs/s=504.6
+0: [ 47.56%] docs=400,000 tokens=475,564,644 docs/s=503.9
+0: [ 48.74%] docs=410,000 tokens=487,429,038 docs/s=504.0
+0: [ 49.92%] docs=420,000 tokens=499,217,375 docs/s=504.2
+0: [ 51.12%] docs=430,000 tokens=511,173,871 docs/s=504.2
+0: [ 52.30%] docs=440,000 tokens=522,963,605 docs/s=504.3
+0: [ 53.50%] docs=450,000 tokens=534,999,370 docs/s=504.3
+0: [ 54.70%] docs=460,000 tokens=546,971,665 docs/s=504.4
+0: [ 55.92%] docs=470,000 tokens=559,166,842 docs/s=504.1
+0: [ 57.10%] docs=480,000 tokens=571,002,379 docs/s=504.3
+0: [ 58.27%] docs=490,000 tokens=582,696,960 docs/s=504.6
+0: [ 59.45%] docs=500,000 tokens=594,549,347 docs/s=504.7
+0: [ 60.65%] docs=510,000 tokens=606,464,506 docs/s=504.8
+0: [ 61.83%] docs=520,000 tokens=618,321,302 docs/s=504.9
+0: [ 62.99%] docs=530,000 tokens=629,932,620 docs/s=505.2
+0: [ 64.17%] docs=540,000 tokens=641,669,938 docs/s=505.2
+0: [ 65.33%] docs=550,000 tokens=653,317,519 docs/s=505.3
+0: [ 66.50%] docs=560,000 tokens=664,994,962 docs/s=505.5
+0: [ 67.67%] docs=570,000 tokens=676,740,293 docs/s=505.6
+0: [ 68.88%] docs=580,000 tokens=688,768,676 docs/s=505.4
+0: [ 70.09%] docs=590,000 tokens=700,875,520 docs/s=504.7
+0: [ 71.26%] docs=600,000 tokens=712,637,797 docs/s=504.8
+0: [ 72.44%] docs=610,000 tokens=724,442,162 docs/s=504.9
+0: [ 73.64%] docs=620,000 tokens=736,350,654 docs/s=504.8
+0: [ 74.82%] docs=630,000 tokens=748,215,567 docs/s=504.9
+0: [ 76.02%] docs=640,000 tokens=760,178,289 docs/s=504.8
+0: [ 77.19%] docs=650,000 tokens=771,857,875 docs/s=505.0
+0: [ 78.37%] docs=660,000 tokens=783,741,110 docs/s=505.0
+0: [ 79.54%] docs=670,000 tokens=795,402,531 docs/s=505.1
+0: [ 80.72%] docs=680,000 tokens=807,243,816 docs/s=505.2
+0: [ 81.89%] docs=690,000 tokens=818,933,371 docs/s=505.3
+0: [ 83.08%] docs=700,000 tokens=830,777,860 docs/s=505.4
+0: [ 84.25%] docs=710,000 tokens=842,546,344 docs/s=505.4
+0: [ 85.43%] docs=720,000 tokens=854,333,961 docs/s=505.4
+0: [ 86.64%] docs=730,000 tokens=866,372,053 docs/s=505.3
+0: [ 87.81%] docs=740,000 tokens=878,084,860 docs/s=505.3
+0: [ 88.99%] docs=750,000 tokens=889,875,890 docs/s=505.4
+0: [ 90.17%] docs=760,000 tokens=901,715,307 docs/s=505.4
+0: [ 91.38%] docs=770,000 tokens=913,830,694 docs/s=505.3
+0: [ 92.56%] docs=780,000 tokens=925,560,955 docs/s=505.3
+0: [ 93.77%] docs=790,000 tokens=937,661,511 docs/s=505.2
+0: [ 94.98%] docs=800,000 tokens=949,822,805 docs/s=505.0
+0: [ 96.12%] docs=810,000 tokens=961,246,509 docs/s=505.3
+0: [ 97.29%] docs=820,000 tokens=972,932,784 docs/s=505.4
+0: [ 98.45%] docs=830,000 tokens=984,547,163 docs/s=505.6
+0: [ 99.64%] docs=840,000 tokens=996,431,878 docs/s=505.6
+0: Wrote 843,017 docs / 1,000,000,117 tokens to /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2.jsonl (complete).
+0: /usr/local/lib/python3.12/dist-packages/torch/library.py:357: UserWarning: Warning only once for all operators,  other operators may also be overridden.
+0:   Overriding a previously registered kernel for the same operator and the same dispatch key
+0:   operator: flash_attn::_flash_attn_backward(Tensor dout, Tensor q, Tensor k, Tensor v, Tensor out, Tensor softmax_lse, Tensor(a6!)? dq, Tensor(a7!)? dk, Tensor(a8!)? dv, float dropout_p, float softmax_scale, bool causal, SymInt window_size_left, SymInt window_size_right, float softcap, Tensor? alibi_slopes, bool deterministic, Tensor? rng_state=None) -> Tensor
+0:     registered at /usr/local/lib/python3.12/dist-packages/torch/_library/custom_ops.py:926
+0:   dispatch key: ADInplaceOrView
+0:   previous kernel: no debug info
+0:        new kernel: registered at /usr/local/lib/python3.12/dist-packages/torch/_library/custom_ops.py:926 (Triggered internally at /opt/pytorch/pytorch/aten/src/ATen/core/dispatch/OperatorEntry.cpp:208.)
+0:   self.m.impl(
+0: Warning: The cache directory for DeepSpeed Triton autotune, /users/course_00206/.triton/autotune, appears to be on an NFS system. While this is generally acceptable, if you experience slowdowns or hanging when DeepSpeed exits, it is recommended to set the TRITON_CACHE_DIR environment variable to a non-NFS path.
+0: /usr/local/lib/python3.12/dist-packages/modelopt/torch/__init__.py:36: UserWarning: transformers version 5.6.1 is not tested with nvidia-modelopt and may cause issues. Please install recommended version with `pip install nvidia-modelopt[hf]` if working with HF models.
+0:   _warnings.warn(
+0: Processing data with 64 workers.
+0: Opening /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2.jsonl
+0: Time to startup: 0.42965006828308105
+0: Processed 10000 documents (11416.225161507191 docs/s, 53.15587842628644 MB/s).
+0: Processed 20000 documents (13051.793098952276 docs/s, 60.624222577623215 MB/s).
+0: Processed 30000 documents (12397.370474011845 docs/s, 57.56383414541292 MB/s).
+0: Processed 40000 documents (12811.472186970403 docs/s, 59.53044042810858 MB/s).
+0: Processed 50000 documents (11639.116741092601 docs/s, 54.13184459636421 MB/s).
+0: Processed 60000 documents (12422.416858669363 docs/s, 57.627070376154165 MB/s).
+0: Processed 70000 documents (12555.513537722461 docs/s, 58.370878930439126 MB/s).
+0: Processed 80000 documents (12266.446721100076 docs/s, 56.97763528076235 MB/s).
+0: Processed 90000 documents (12644.312782873634 docs/s, 58.66728540459136 MB/s).
+0: Processed 100000 documents (12875.482358153258 docs/s, 59.57778146284716 MB/s).
+0: Processed 110000 documents (12985.068422500586 docs/s, 60.072973305761224 MB/s).
+0: Processed 120000 documents (13056.830217242405 docs/s, 60.32411361410281 MB/s).
+0: Processed 130000 documents (13001.73963935032 docs/s, 60.13736321645667 MB/s).
+0: Processed 140000 documents (12609.743913795768 docs/s, 58.3717990835041 MB/s).
+0: Processed 150000 documents (12723.602985540554 docs/s, 58.818860533977244 MB/s).
+0: Processed 160000 documents (12719.366396146377 docs/s, 58.84963557194876 MB/s).
+0: Processed 170000 documents (12733.200163906327 docs/s, 58.81552462793296 MB/s).
+0: Processed 180000 documents (12730.972145133557 docs/s, 58.75687839937824 MB/s).
+0: Processed 190000 documents (12123.970518093987 docs/s, 55.912718242389936 MB/s).
+0: Processed 200000 documents (12487.755428512291 docs/s, 57.623278216225145 MB/s).
+0: Processed 210000 documents (12629.369134360746 docs/s, 58.27904231429599 MB/s).
+0: Processed 220000 documents (12709.179547411468 docs/s, 58.631759219740374 MB/s).
+0: Processed 230000 documents (12595.960922630418 docs/s, 58.04003745114575 MB/s).
+0: Processed 240000 documents (12767.210190076557 docs/s, 58.802866194302965 MB/s).
+0: Processed 250000 documents (12793.698728560792 docs/s, 58.94109449120445 MB/s).
+0: Processed 260000 documents (12784.12038569598 docs/s, 58.86869902457634 MB/s).
+0: Processed 270000 documents (12751.996100472294 docs/s, 58.68352496837737 MB/s).
+0: Processed 280000 documents (12590.892062421692 docs/s, 57.93037715185893 MB/s).
+0: Processed 290000 documents (12665.771520965229 docs/s, 58.31484894981191 MB/s).
+0: Processed 300000 documents (12598.311672255699 docs/s, 58.04457953223702 MB/s).
+0: Processed 310000 documents (12637.302174012624 docs/s, 58.24026844258624 MB/s).
+0: Processed 320000 documents (12737.093763745193 docs/s, 58.73952034360026 MB/s).
+0: Processed 330000 documents (12739.356978500458 docs/s, 58.74745027690092 MB/s).
+0: Processed 340000 documents (12635.501402797316 docs/s, 58.27788018242089 MB/s).
+0: Processed 350000 documents (12758.109974897832 docs/s, 58.832747912743635 MB/s).
+0: Processed 360000 documents (12600.661396648831 docs/s, 58.176475167725215 MB/s).
+0: Processed 370000 documents (12592.738760709133 docs/s, 58.14727981649031 MB/s).
+0: Processed 380000 documents (12657.855498289306 docs/s, 58.42313001983613 MB/s).
+0: Processed 390000 documents (12571.752635420275 docs/s, 58.05248702507493 MB/s).
+0: Processed 400000 documents (12631.894951692075 docs/s, 58.3455830543214 MB/s).
+0: Processed 410000 documents (12656.825763276678 docs/s, 58.45767004397986 MB/s).
+0: Processed 420000 documents (12634.486787282696 docs/s, 58.342012215851604 MB/s).
+0: Processed 430000 documents (12534.342472306624 docs/s, 57.886415627608045 MB/s).
+0: Processed 440000 documents (12546.689138154097 docs/s, 57.93333501031001 MB/s).
+0: Processed 450000 documents (12593.458517770292 docs/s, 58.16371818743325 MB/s).
+0: Processed 460000 documents (12603.791221340904 docs/s, 58.21749317366988 MB/s).
+0: Processed 470000 documents (12598.5234737652 docs/s, 58.223367956854126 MB/s).
+0: Processed 480000 documents (12610.681192887283 docs/s, 58.27175486440222 MB/s).
+0: Processed 490000 documents (12629.586958324542 docs/s, 58.33548575535118 MB/s).
+0: Processed 500000 documents (12614.673097778857 docs/s, 58.26622002611956 MB/s).
+0: Processed 510000 documents (12558.899605581768 docs/s, 58.0096009020682 MB/s).
+0: Processed 520000 documents (12514.52969769699 docs/s, 57.802452617940254 MB/s).
+0: Processed 530000 documents (12578.593009557599 docs/s, 58.071405765108416 MB/s).
+0: Processed 540000 documents (12562.693949321683 docs/s, 57.98627414556441 MB/s).
+0: Processed 550000 documents (12508.268023619139 docs/s, 57.71892231103983 MB/s).
+0: Processed 560000 documents (12582.27951577077 docs/s, 58.04454287521083 MB/s).
+0: Processed 570000 documents (12609.144329318384 docs/s, 58.157884529456865 MB/s).
+0: Processed 580000 documents (12542.665311800345 docs/s, 57.86266608848056 MB/s).
+0: Processed 590000 documents (12447.843029250365 docs/s, 57.44292127486742 MB/s).
+0: Processed 600000 documents (12545.416197342302 docs/s, 57.88444518082134 MB/s).
+0: Processed 610000 documents (12542.76970858629 docs/s, 57.864148207481755 MB/s).
+0: Processed 620000 documents (12557.336755782264 docs/s, 57.935113250152426 MB/s).
+0: Processed 630000 documents (12554.638833778343 docs/s, 57.91903693910802 MB/s).
+0: Processed 640000 documents (12574.33439814291 docs/s, 58.01669777521155 MB/s).
+0: Processed 650000 documents (12552.320450161977 docs/s, 57.90057844410667 MB/s).
+0: Processed 660000 documents (12514.97163218296 docs/s, 57.72801223828894 MB/s).
+0: Processed 670000 documents (12523.155483275776 docs/s, 57.75114595091639 MB/s).
+0: Processed 680000 documents (12507.690034778034 docs/s, 57.67927915999665 MB/s).
+0: Processed 690000 documents (12546.206545387195 docs/s, 57.84362409674205 MB/s).
+0: Processed 700000 documents (12549.956388236782 docs/s, 57.85884749431296 MB/s).
+0: Processed 710000 documents (12557.404233213498 docs/s, 57.885989374895374 MB/s).
+0: Processed 720000 documents (12497.433512296504 docs/s, 57.60586262483595 MB/s).
+0: Processed 730000 documents (12483.353544676113 docs/s, 57.552708289830115 MB/s).
+0: Processed 740000 documents (12492.537053494034 docs/s, 57.588531613486595 MB/s).
+0: Processed 750000 documents (12507.910267316041 docs/s, 57.65507220968588 MB/s).
+0: Processed 760000 documents (12522.724785816326 docs/s, 57.7187144415439 MB/s).
+0: Processed 770000 documents (12520.691966035483 docs/s, 57.72283108142004 MB/s).
+0: Processed 780000 documents (12539.650687422649 docs/s, 57.79928142520924 MB/s).
+0: Processed 790000 documents (12533.356267464027 docs/s, 57.781230641927685 MB/s).
+0: Processed 800000 documents (12502.830324658522 docs/s, 57.65478263861165 MB/s).
+0: Processed 810000 documents (12525.248446760042 docs/s, 57.73206523263113 MB/s).
+0: Processed 820000 documents (12549.207842605427 docs/s, 57.83043476514235 MB/s).
+0: Processed 830000 documents (12508.970585676183 docs/s, 57.63208106725389 MB/s).
+0: Processed 840000 documents (12514.220638430044 docs/s, 57.65950033881522 MB/s).
+FineWeb-Edu Megatron prefix:
+export MEGATRON_DATA_PATH=/iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2_text_document
+END TIME: Tue Apr 28 05:32:55 CEST 2026
