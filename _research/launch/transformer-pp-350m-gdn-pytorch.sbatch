@@ -46,6 +46,8 @@ export TORCH_CPP_LOG_LEVEL=WARNING
 export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
 export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
+export MEGATRON_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-1}
+export MEGATRON_LINEAR_TORCH_COMPILE_MODE=${MEGATRON_LINEAR_TORCH_COMPILE_MODE:-reduce-overhead}
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
@@ -61,7 +63,7 @@ FFN_HIDDEN=${FFN_HIDDEN:-2816}
 NUM_HEADS=${NUM_HEADS:-16}
 NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
-MBS=${MBS:-16}
+MBS=${MBS:-2}
 GBS=${GBS:-128}
 SEQ_LEN=${SEQ_LEN:-4096}
 TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
@@ -74,7 +76,7 @@ TP=1
 PP=1
 CP=${CP:-1}
 
-PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
+PROJECT=${WANDB_PROJECT:-clerv1-runs}
 EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn-pytorch-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
@@ -204,6 +206,7 @@ LOGGING_ARGS=(
     --log-progress
     --log-memory-to-tensorboard
     --log-params-norm
+    --log-validation-ppl-to-tensorboard
     --tensorboard-dir $WORKDIR/_research/results/runs/tb-$SLURM_JOB_ID
     --tensorboard-log-interval 1
     --log-timers-to-tensorboard
@@ -255,11 +258,16 @@ export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
 export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
 export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
+export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
+export WANDB_ENTITY=${WANDB_ENTITY:-cler}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
     MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
+    if [ -n "${WANDB_ENTITY:-}" ]; then
+        MEGATRON_ARGS="$MEGATRON_ARGS --wandb-entity $WANDB_ENTITY"
+    fi
 else
     export WANDB_MODE=disabled
 fi
@@ -271,6 +279,8 @@ ENV_SETUP="export MASTER_ADDR=$MASTER_ADDR; \
     export LOCAL_RANK=\$SLURM_LOCALID; \
     export LOCAL_WORLD_SIZE=$((SLURM_NTASKS/SLURM_NNODES)); \
     export PYTHONPATH=$WORKDIR:$PACKAGE_DIR:$WORKDIR\${PYTHONPATH:+:\$PYTHONPATH}; \
+    export MEGATRON_LINEAR_TORCH_COMPILE=$MEGATRON_LINEAR_TORCH_COMPILE; \
+    export MEGATRON_LINEAR_TORCH_COMPILE_MODE=$MEGATRON_LINEAR_TORCH_COMPILE_MODE; \
     cd $WORKDIR"
 
 TRAINING_CMD="bash $WORKDIR/_research/launch/install_python_deps.sh $PACKAGE_DIR && python3 $WORKDIR/pretrain_gpt.py $MEGATRON_ARGS"

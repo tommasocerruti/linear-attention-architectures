@@ -25,7 +25,10 @@
 
 set -euo pipefail
 
-REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+REPO_ROOT=${CLER_REPO_ROOT:-${SLURM_SUBMIT_DIR:-/iopsstor/scratch/cscs/$USER/cler}}
+if [ ! -f "$REPO_ROOT/pretrain_gpt.py" ]; then
+    REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+fi
 SCRIPT_DIR=$REPO_ROOT/_research/launch
 cd "$REPO_ROOT"
 
@@ -56,6 +59,9 @@ export LINEAR_NUM_VALUE_HEADS=${LINEAR_NUM_VALUE_HEADS:-16}
 export EXP_NAME=${EXP_NAME:-transformer-pp-1.3b-cler-v1-$GIT_SHA}
 export APERTUS_FEATURE=${APERTUS_FEATURE:-cler-v1-gdn-pytorch}
 export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-1.3b-cler-v1}
+export WANDB_ENTITY=${WANDB_ENTITY:-cler}
+export WANDB_PROJECT=${WANDB_PROJECT:-clerv1-runs}
+export WANDB_GROUP=${WANDB_GROUP:-clerv1}
 export WANDB_ARCH=${WANDB_ARCH:-cler-v1-gdn}
 export WANDB_MODEL_SIZE=${WANDB_MODEL_SIZE:-1.3B}
 

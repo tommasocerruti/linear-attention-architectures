@@ -5,6 +5,8 @@ from typing import List, Optional
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.backends import BackendSpecProvider
 from megatron.core.ssm.delta_net import DeltaNet, DeltaNetSubmodules
+from megatron.core.ssm.delta_net_pytorch import DeltaNet as DeltaNetPyTorch
+from megatron.core.ssm.delta_net_pytorch import DeltaNetSubmodules as DeltaNetPyTorchSubmodules
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNetSubmodules
 from megatron.core.ssm.gated_delta_net_pytorch import GatedDeltaNet as GatedDeltaNetPyTorch
 from megatron.core.transformer.enums import AttnMaskType, LayerType
@@ -118,6 +120,27 @@ def get_delta_net_module_spec(
     return attention
 
 
+def get_delta_net_pytorch_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for pure PyTorch DeltaNet attention."""
+
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
+    rms_norm = config.normalization == "RMSNorm"
+    attention = ModuleSpec(
+        module=DeltaNetPyTorch,
+        submodules=DeltaNetPyTorchSubmodules(
+            in_proj=backend.column_parallel_layer_norm_linear(),
+            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": True},
+    )
+    return attention
+
+
 def get_dsa_module_spec_for_backend(
     config: TransformerConfig, backend: BackendSpecProvider = None
 ) -> ModuleSpec:
@@ -187,6 +210,8 @@ def get_experimental_attention_variant_module_spec(
         return get_gated_delta_net_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net":
         return get_delta_net_module_spec(config=config, backend=backend)
+    elif config.experimental_attention_variant == "delta_net_pytorch":
+        return get_delta_net_pytorch_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "dsa":
         return get_dsa_module_spec_for_backend(config=config, backend=backend)
     else:
@@ -335,7 +360,12 @@ def get_transformer_block_with_experimental_attention_variant_spec(
 
 def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -> bool:
     """Check if the experimental attention variant is a linear attention variant."""
-    linear_attention_variants = ["gated_delta_net_pytorch", "gated_delta_net", "delta_net"]
+    linear_attention_variants = [
+        "gated_delta_net_pytorch",
+        "gated_delta_net",
+        "delta_net",
+        "delta_net_pytorch",
+    ]
     return experimental_attention_variant in linear_attention_variants
 
 

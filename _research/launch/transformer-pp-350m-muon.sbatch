@@ -76,7 +76,7 @@ TP=1
 PP=1
 CP=${CP:-1}
 
-PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
+PROJECT=${WANDB_PROJECT:-clerv1-runs}
 EXP_NAME=${EXP_NAME:-transformer-pp-350m-muon-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
@@ -211,6 +211,15 @@ DATA_ARGS=(
     --num-workers 4
 )
 
+RECOMPUTE_ARGS=()
+if [ "${RECOMPUTE:-0}" = "1" ]; then
+    RECOMPUTE_ARGS=(
+        --recompute-granularity full
+        --recompute-method uniform
+        --recompute-num-layers $NUM_LAYERS
+    )
+fi
+
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
@@ -226,26 +235,21 @@ MEGATRON_ARGS="\
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
 
-RECOMPUTE_ARGS=()
-if [ "${RECOMPUTE:-0}" = "1" ]; then
-    RECOMPUTE_ARGS=(
-        --recompute-granularity full
-        --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
-    )
-fi
-
 export WANDB_ARCH=softmax
 export WANDB_KERNEL=triton
 export WANDB_OPTIMIZER=muon
 export WANDB_MODEL_SIZE=350M
 export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
+export WANDB_ENTITY=${WANDB_ENTITY:-cler}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
     MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
+    if [ -n "${WANDB_ENTITY:-}" ]; then
+        MEGATRON_ARGS="$MEGATRON_ARGS --wandb-entity $WANDB_ENTITY"
+    fi
 else
     export WANDB_MODE=disabled
 fi

@@ -6,6 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple, Union
 
@@ -47,6 +48,15 @@ def l2norm(x, dim=-1, eps=1e-6):
 HAVE_FLA = False
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_compile_linear_rule(fn):
+    if os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE", "0") != "1":
+        return fn
+    if not hasattr(torch, "compile"):
+        return fn
+    mode = os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE_MODE", "reduce-overhead")
+    return torch.compile(fn, mode=mode, fullgraph=False, dynamic=False)
 
 
 @dataclass
@@ -199,7 +209,7 @@ class GatedDeltaNet(MegatronModule):
         setattr(self.A_log, "partition_dim", 0)
 
         if True:
-            self.gated_delta_rule = torch_chunk_gated_delta_rule
+            self.gated_delta_rule = _maybe_compile_linear_rule(torch_chunk_gated_delta_rule)
         else:
             self.gated_delta_rule = chunk_gated_delta_rule
         self.supports_cler = True
@@ -405,15 +415,19 @@ class GatedDeltaNet(MegatronModule):
         )
         nvtx_range_pop(suffix="prepare_qkv_for_gated_delta_rule")
 
-        if self.config.cler_enabled and cler_residual is not None:
-            if self.config.cler_detach_residual:
-                cler_residual = cler_residual.detach()
-            if cler_residual.shape != value.shape:
-                raise ValueError(
-                    "CLER residual shape must match the current GDN value shape, "
-                    f"got {cler_residual.shape=} and {value.shape=}."
-                )
-            value = value + self.cler_gamma.to(dtype=value.dtype) * cler_residual
+        if self.config.cler_enabled:
+            cler_gamma = self.cler_gamma.to(dtype=value.dtype)
+            if cler_residual is not None:
+                if self.config.cler_detach_residual:
+                    cler_residual = cler_residual.detach()
+                if cler_residual.shape != value.shape:
+                    raise ValueError(
+                        "CLER residual shape must match the current GDN value shape, "
+                        f"got {cler_residual.shape=} and {value.shape=}."
+                    )
+                value = value + cler_gamma * cler_residual
+            else:
+                value = value + cler_gamma * value.new_zeros(())
 
         # Calculate g and beta
         nvtx_range_push(suffix="g_and_beta")
