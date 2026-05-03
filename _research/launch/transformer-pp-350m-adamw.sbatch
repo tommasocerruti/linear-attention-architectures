@@ -29,7 +29,14 @@ echo "START TIME: $(date)"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
 REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
+WORKDIR=${CLER_REPO_ROOT:-${SLURM_SUBMIT_DIR:-$REPO_DIR}}
+if [ ! -f "$WORKDIR/pretrain_gpt.py" ]; then
+    WORKDIR=$REPO_DIR
+fi
+if [ ! -f "$WORKDIR/pretrain_gpt.py" ]; then
+    echo "ERROR: CLER repo not found. Set CLER_REPO_ROOT to the checkout containing pretrain_gpt.py." >&2
+    exit 1
+fi
 cd $WORKDIR
 
 PACKAGE_DIR=$REPO_DIR/_research/packages

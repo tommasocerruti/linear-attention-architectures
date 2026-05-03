@@ -278,12 +278,14 @@ def patch_training_log() -> None:
         report_memory_flag, skipped_iter, grad_norm, params_norm,
         num_zeros_in_grad, max_attention_logit,
         pg_collection=None, is_first_iteration=False,
+        **kwargs,
     ):
         ret = original(
             loss_dict, total_loss_dict, learning_rate, iteration, loss_scale,
             report_memory_flag, skipped_iter, grad_norm, params_norm,
             num_zeros_in_grad, max_attention_logit,
             pg_collection=pg_collection, is_first_iteration=is_first_iteration,
+            **kwargs,
         )
 
         writer = _STATE["writer"]
@@ -342,6 +344,13 @@ def patch_training_log() -> None:
             row["params_norm"] = float(params_norm)
         if tokens_per_sec_per_gpu is not None:
             row["tput"] = float(tokens_per_sec_per_gpu)
+        cler_gamma_stats = kwargs.get("cler_gamma_stats")
+        if cler_gamma_stats:
+            for name, value in cler_gamma_stats.items():
+                try:
+                    row[name.replace("/", "_")] = float(value)
+                except (TypeError, ValueError):
+                    pass
 
         if _STATE["log_per_layer_grads"] and _STATE["model"] is not None:
             row["per_layer_grad_norm"] = _per_layer_grad_norms(_STATE["model"])
