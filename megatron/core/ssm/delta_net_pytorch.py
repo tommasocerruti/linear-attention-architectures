@@ -49,10 +49,14 @@ def _maybe_compile_linear_rule(fn):
     if not hasattr(torch, "compile"):
         return fn
     mode = os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE_MODE", "reduce-overhead")
-    options = None
     if os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS", "0") != "1":
-        options = {"triton.cudagraphs": False}
-    return torch.compile(fn, mode=mode, fullgraph=False, dynamic=False, options=options)
+        return torch.compile(
+            fn,
+            fullgraph=False,
+            dynamic=False,
+            options={"triton.cudagraphs": False},
+        )
+    return torch.compile(fn, mode=mode, fullgraph=False, dynamic=False)
 
 
 def l2norm(x, dim=-1, eps=1e-6):

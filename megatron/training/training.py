@@ -1987,7 +1987,6 @@ def training_log(
     max_attention_logit,
     pg_collection=None,
     is_first_iteration=False,
-    cler_gamma_stats=None,
 ):
     """Log training information such as losses, timing, ...."""
     args = get_args()
@@ -2128,12 +2127,6 @@ def training_log(
             writer.add_scalar('params-norm vs samples', params_norm, args.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({'params-norm': params_norm}, iteration)
-        if cler_gamma_stats:
-            for name, value in cler_gamma_stats.items():
-                writer.add_scalar(name, value, iteration)
-                writer.add_scalar(name + ' vs samples', value, args.consumed_train_samples)
-            if wandb_writer:
-                wandb_writer.log(cler_gamma_stats, iteration)
         if args.perform_rl_step:
             grpo_collection_iteration = iteration // (args.grpo_iterations * ( ( args.grpo_samples_per_iteration )// args.global_batch_size ))
             writer.add_scalar('grpo_collection_iteration', grpo_collection_iteration, iteration)
@@ -2286,11 +2279,6 @@ def training_log(
             log_string += f' num zeros: {num_zeros_in_grad} |'
         if params_norm is not None:
             log_string += f' params norm: {params_norm:.3f} |'
-        if cler_gamma_stats:
-            log_string += (
-                f" cler gamma mean: {cler_gamma_stats['cler_gamma/mean']:.6E} |"
-                f" cler gamma max abs: {cler_gamma_stats['cler_gamma/max_abs']:.6E} |"
-            )
         log_string += ' number of skipped iterations: {:3d} |'.format(
             total_loss_dict[skipped_iters_key]
         )
@@ -2323,33 +2311,6 @@ def training_log(
         timers.log(timers_to_log, normalizer=args.log_interval, reset=should_reset)
 
     return report_memory_flag
-
-
-def collect_cler_gamma_stats(model):
-    """Collect local CLER gamma parameter statistics for logging."""
-
-    if model is None:
-        return {}
-    model_chunks = model if isinstance(model, (list, tuple)) else [model]
-    gamma_tensors = []
-    for model_chunk in model_chunks:
-        unwrapped_model = unwrap_model(model_chunk)
-        for name, param in unwrapped_model.named_parameters():
-            if name.endswith("cler_gamma"):
-                gamma_tensors.append(param.detach().float().reshape(-1))
-    if not gamma_tensors:
-        return {}
-
-    gammas = torch.cat(gamma_tensors)
-    return {
-        'cler_gamma/mean': gammas.mean().item(),
-        'cler_gamma/min': gammas.min().item(),
-        'cler_gamma/max': gammas.max().item(),
-        'cler_gamma/abs_mean': gammas.abs().mean().item(),
-        'cler_gamma/max_abs': gammas.abs().max().item(),
-        'cler_gamma/l2': torch.linalg.vector_norm(gammas).item(),
-        'cler_gamma/count': float(gammas.numel()),
-    }
 
 
 def compute_throughputs_and_append_to_progress_log(iteration, num_floating_point_operations_so_far):
@@ -3188,7 +3149,6 @@ def train(
 
         if args.log_params_norm:
             params_norm = calc_params_l2_norm(model)
-        cler_gamma_stats = collect_cler_gamma_stats(model) if args.cler_enabled else None
         if optimizer is not None:
             learning_rate = get_canonical_lr_for_logging(optimizer.param_groups)
         else:
@@ -3207,7 +3167,6 @@ def train(
             max_attention_logit,
             pg_collection=model_pg_collection,
             is_first_iteration=is_first_iteration,
-            cler_gamma_stats=cler_gamma_stats,
         )
         is_first_iteration = False
 
