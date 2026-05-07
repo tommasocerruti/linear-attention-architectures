@@ -55,7 +55,7 @@ export TORCH_CPP_LOG_LEVEL=WARNING
 export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
 export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
-if [ "${DELTA_NET_VARIANT:-delta_net}" = "delta_net_pytorch" ] || [ "${DELTA_NET_VARIANT:-delta_net}" = "linear_transformer_pytorch" ]; then
+if [ "${DELTA_NET_VARIANT:-delta_net}" = "delta_net_pytorch" ] || [ "${DELTA_NET_VARIANT:-delta_net}" = "cler_delta_net_pytorch" ] || [ "${DELTA_NET_VARIANT:-delta_net}" = "linear_transformer_pytorch" ]; then
     export MEGATRON_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-1}
 else
     export MEGATRON_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}

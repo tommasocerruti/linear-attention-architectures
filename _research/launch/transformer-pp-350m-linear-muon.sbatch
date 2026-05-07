@@ -6,6 +6,7 @@
 #   cler         - CLER v1 on PyTorch Gated DeltaNet
 #   deltanet     - DeltaNet baseline
 #   deltanet_pytorch - pure PyTorch DeltaNet baseline
+#   cler_deltanet_pytorch - CLER v1 on pure PyTorch DeltaNet
 #
 # Required environment:
 #   MEGATRON_DATA_PATH=/path/to/fineweb_edu_*_text_document
@@ -191,8 +192,31 @@ case "$LINEAR_VARIANT" in
         APERTUS_TRACK_DEFAULT=transformer-pp-350m-deltanet-pytorch-muon
         EXP_NAME_DEFAULT=transformer-pp-350m-deltanet-pytorch-muon-$GIT_SHA
         ;;
+    cler_deltanet_pytorch)
+        export CLER_ENABLED=1
+        LINEAR_ARGS=(
+            --experimental-attention-variant cler_delta_net_pytorch
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-128}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-4}
+        )
+        CLER_ARGS=(
+            --cler-enabled
+            --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+        )
+        if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-detach-residual)
+        fi
+        WANDB_ARCH_DEFAULT=cler-v1-deltanet-pytorch
+        APERTUS_FEATURE_DEFAULT=cler-v1-deltanet-pytorch-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon-$GIT_SHA
+        ;;
     *)
-        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, deltanet, or deltanet_pytorch)" >&2
+        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, deltanet, deltanet_pytorch, or cler_deltanet_pytorch)" >&2
         exit 1
         ;;
 esac

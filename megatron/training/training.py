@@ -598,6 +598,7 @@ def num_floating_point_operations(args, batch_size):
             elif args.experimental_attention_variant in (
                 "delta_net",
                 "delta_net_pytorch",
+                "cler_delta_net_pytorch",
                 "linear_transformer_pytorch",
             ):
                 # Calculate the FLOPs for the plain delta net attention.
