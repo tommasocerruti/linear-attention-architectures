@@ -8,10 +8,10 @@
 # This wrapper delegates to the shared Linear-RNN Muon launcher and pins the
 # dataset, W&B labels, pure additive linear-memory variant, and run length.
 #
-#SBATCH --job-name=350m-fwe1b-lt
+#SBATCH --job-name=lt-350m-fwe1b
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
-#SBATCH --time=10:00:00
+#SBATCH --time=09:58:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1

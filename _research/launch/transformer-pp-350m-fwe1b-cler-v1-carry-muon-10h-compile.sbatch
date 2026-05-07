@@ -8,10 +8,10 @@
 #
 # W&B: cler/clerv1-runs, group 350m-llama2-finewebedu-1b-pytorch-muon-10h-20260503
 #
-#SBATCH --job-name=cler-g-350m-fwe1b
+#SBATCH --job-name=cler-g-350m
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
-#SBATCH --time=10:00:00
+#SBATCH --time=09:58:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
