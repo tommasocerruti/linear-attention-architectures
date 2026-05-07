@@ -258,3 +258,28 @@ prefix, and only then converts that local prefix into Megatron `.bin` / `.idx`
 files. In practice, the existence check is therefore not testing whether the
 raw dataset exists on the cluster, but whether the converted local Megatron
 prefix already exists at the expected scratch path.
+
+### 1B Clariden Results
+
+The final `1B` comparison now includes both the original AdamW runs and the
+follow-up Muon runs on the same FineWeb-Edu + LLaMA-2 setup. For the hybrid
+architectures, the Muon numbers below come from the corrected reruns with the
+same layer counts as the AdamW baselines (`22L` for GDN and `24L` for
+DeltaNet), so the comparison is optimizer-only.
+
+| Baseline | Optimizer | Final train loss | Final val loss | Val PPL | Throughput (ktokens/s/GPU) | Throughput (TFLOP/s/GPU) | Elapsed |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Transformer++ softmax | AdamW | 2.9111 | 2.9019 | 18.2095 | 144.8 | 334.6 | 00:31:30 |
+| Transformer++ softmax | Muon | 2.7141 | 2.7239 | 15.2397 | 136.6 | 315.7 | 00:47:31 |
+| Gated DeltaNet | AdamW | 2.8587 | 2.8562 | 17.3950 | 159.5 | 298.6 | 00:27:47 |
+| Gated DeltaNet | Muon | 2.6965 | 2.7097 | 15.0254 | 154.8 | 289.6 | 00:28:44 |
+| DeltaNet | AdamW | 2.9484 | 2.9391 | 18.8987 | 153.4 | 296.8 | 00:28:45 |
+| DeltaNet | Muon | 2.6990 | 2.7137 | 15.0847 | 146.7 | 283.7 | 00:30:00 |
+
+Full W&B workspace:
+[megatron-lm-research-baseline](https://wandb.ai/tommasocerruti-eth-z-rich/megatron-lm-research-baseline?nw=nwusertommasocerruti)
+
+Open full-size image:
+[clariden_1b_baseline_comparison_2026-04-28.png](week2/clariden_1b_baseline_comparison_2026-04-28.png)
+
+![Clariden 1B baseline comparison](week2/clariden_1b_baseline_comparison_2026-04-28.png)
