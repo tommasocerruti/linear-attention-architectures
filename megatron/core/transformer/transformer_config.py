@@ -268,6 +268,7 @@ class TransformerConfig(ModelParallelConfig):
             'gated_delta_net',
             'delta_net',
             'delta_net_pytorch',
+            'linear_transformer_pytorch',
             'dsa',
         ]
     ] = None
@@ -1092,6 +1093,7 @@ class TransformerConfig(ModelParallelConfig):
             "gated_delta_net",
             "delta_net",
             "delta_net_pytorch",
+            "linear_transformer_pytorch",
         }:
             assert (
                 self.linear_attention_freq is not None
@@ -1126,11 +1128,13 @@ class TransformerConfig(ModelParallelConfig):
                 )
             else:
                 assert self.linear_num_value_heads == self.linear_num_key_heads, (
-                    "delta_net variants require matching q/k and value head counts, got "
+                    "delta_net and linear_transformer variants require matching q/k and value "
+                    "head counts, got "
                     f"{self.linear_num_key_heads=} and {self.linear_num_value_heads=}."
                 )
                 assert not self.attention_output_gate, (
-                    "delta_net variants do not support --attention-output-gate in this wrapper."
+                    "delta_net and linear_transformer variants do not support "
+                    "--attention-output-gate in this wrapper."
                 )
 
             # Check tensor parallelism compatibility

@@ -9,6 +9,12 @@ from megatron.core.ssm.delta_net_pytorch import DeltaNet as DeltaNetPyTorch
 from megatron.core.ssm.delta_net_pytorch import DeltaNetSubmodules as DeltaNetPyTorchSubmodules
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNetSubmodules
 from megatron.core.ssm.gated_delta_net_pytorch import GatedDeltaNet as GatedDeltaNetPyTorch
+from megatron.core.ssm.linear_transformer_pytorch import (
+    LinearTransformer as LinearTransformerPyTorch,
+)
+from megatron.core.ssm.linear_transformer_pytorch import (
+    LinearTransformerSubmodules as LinearTransformerPyTorchSubmodules,
+)
 from megatron.core.transformer.enums import AttnMaskType, LayerType
 from megatron.core.transformer.experimental_attention_variant.dsa import (
     DSAIndexer,
@@ -141,6 +147,27 @@ def get_delta_net_pytorch_module_spec(
     return attention
 
 
+def get_linear_transformer_pytorch_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for pure PyTorch additive linear-transformer attention."""
+
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
+    rms_norm = config.normalization == "RMSNorm"
+    attention = ModuleSpec(
+        module=LinearTransformerPyTorch,
+        submodules=LinearTransformerPyTorchSubmodules(
+            in_proj=backend.column_parallel_layer_norm_linear(),
+            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": True},
+    )
+    return attention
+
+
 def get_dsa_module_spec_for_backend(
     config: TransformerConfig, backend: BackendSpecProvider = None
 ) -> ModuleSpec:
@@ -212,6 +239,8 @@ def get_experimental_attention_variant_module_spec(
         return get_delta_net_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net_pytorch":
         return get_delta_net_pytorch_module_spec(config=config, backend=backend)
+    elif config.experimental_attention_variant == "linear_transformer_pytorch":
+        return get_linear_transformer_pytorch_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "dsa":
         return get_dsa_module_spec_for_backend(config=config, backend=backend)
     else:
@@ -365,6 +394,7 @@ def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -
         "gated_delta_net",
         "delta_net",
         "delta_net_pytorch",
+        "linear_transformer_pytorch",
     ]
     return experimental_attention_variant in linear_attention_variants
 
