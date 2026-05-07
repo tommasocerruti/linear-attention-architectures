@@ -8,7 +8,7 @@
 # This wrapper delegates to the shared Linear-RNN Muon launcher and only pins
 # the dataset, W&B labels, CLER variant, and run length.
 #
-#SBATCH --job-name=350m-fwe1b-cler-dn
+#SBATCH --job-name=cler-dn-350m-fwe1b
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
 #SBATCH --time=10:00:00
@@ -50,6 +50,7 @@ export MBS=2
 export GBS=128
 export CLER_GAMMA_INIT=0.0
 export CLER_GAMMA_LOG_INTERVAL=10
+export CLER_RESIDUAL_LOG_INTERVAL=10
 export MEGATRON_LINEAR_TORCH_COMPILE=1
 export MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS=0
 

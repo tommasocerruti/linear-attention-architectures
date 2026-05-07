@@ -1,14 +1,8 @@
 #!/bin/bash
 #
-# Debug smoke for CLER-on-DeltaNet PyTorch on FineWeb-Edu 50M / LLaMA2.
+# Longer debug smoke for CLER v1 residual carry-through on FineWeb-Edu 50M / LLaMA2.
 #
-# Submit with:
-#   sbatch _research/launch/debug-fwe50m-cler-deltanet-pytorch-smoke.sbatch
-#
-# The debug allocation runs the shared Muon wrapper for 8 iterations and logs
-# cler_gamma into the JSONL sidecar every step.
-#
-#SBATCH --job-name=debug-fwe50m-cler-dn
+#SBATCH --job-name=debug-fwe50m-cler-carry8
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=debug
 #SBATCH --time=00:45:00
@@ -33,16 +27,15 @@ export MEGATRON_DATA_PATH=/iopsstor/scratch/cscs/course_00252/cler/_research/res
 export LLAMA2_TOKENIZER_MODEL=/iopsstor/scratch/cscs/course_00252/llama2-tokenizer/tokenizer.model
 export WANDB_ENTITY=cler
 export WANDB_PROJECT=clerv1-runs
-export WANDB_GROUP=debug-fwe50m-cler-deltanet-20260507
+export WANDB_GROUP=debug-fwe50m-cler-carry-smokes-20260507
 export WANDB_MODE=${WANDB_MODE:-online}
 export WANDB_DATASET=fineweb_edu_50m_llama2_smoke
 export WANDB_IS_SMOKE=1
-export WANDB_ARCH=cler-v1-deltanet-pytorch
+export WANDB_ARCH=cler-v1-gdn-pytorch-carry
 export WANDB_KERNEL=torch
-export APERTUS_FEATURE=debug-cler-deltanet-pytorch
-export APERTUS_TRACK=debug-fwe50m-cler-deltanet-pytorch
-export LINEAR_VARIANT=cler_deltanet_pytorch
-export EXP_NAME=debug-fwe50m-cler-deltanet-pytorch
+export APERTUS_FEATURE=debug-cler-v1-carry
+export APERTUS_TRACK=debug-fwe50m-cler-v1-carry-8iter
+export EXP_NAME=debug-fwe50m-cler-v1-carry-8iter
 export TRAIN_ITERS=8
 export LR_WARMUP_ITERS=1
 export EVAL_INTERVAL=8
@@ -50,6 +43,7 @@ export EVAL_ITERS=0
 export EXIT_DURATION_IN_MINS=35
 export MBS=2
 export GBS=128
+export CLER_ENABLED=1
 export CLER_GAMMA_INIT=0.0
 export CLER_GAMMA_LOG_INTERVAL=1
 export CLER_RESIDUAL_LOG_INTERVAL=1
@@ -57,4 +51,4 @@ export MEGATRON_LINEAR_TORCH_COMPILE=1
 export MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS=0
 
 cd /users/course_00252/cler
-exec bash _research/launch/transformer-pp-350m-linear-muon.sbatch
+exec bash _research/launch/transformer-pp-350m-gdn-pytorch.sbatch

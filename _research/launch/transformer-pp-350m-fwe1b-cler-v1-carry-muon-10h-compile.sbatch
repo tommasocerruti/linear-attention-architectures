@@ -8,7 +8,7 @@
 #
 # W&B: cler/clerv1-runs, group 350m-llama2-finewebedu-1b-pytorch-muon-10h-20260503
 #
-#SBATCH --job-name=350m-fwe1b-cler-carry-muon-c10h
+#SBATCH --job-name=cler-g-350m-fwe1b
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
 #SBATCH --time=10:00:00
@@ -31,11 +31,15 @@ fi
 cd /users/course_00252/cler
 export CLER_REPO_ROOT=/users/course_00252/cler
 export WANDB_GROUP=${WANDB_GROUP:-350m-llama2-finewebedu-1b-pytorch-muon-10h-20260503}
-export EXP_NAME=${EXP_NAME:-350m-llama2-fwe1b-cler-v1-carry-muon-compile10h}
+export WANDB_ARCH=${WANDB_ARCH:-cler-v1-gdn-pytorch-carry}
+export APERTUS_FEATURE=${APERTUS_FEATURE:-cler-gated-v1-gdn-pytorch-muon-compile10h}
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-cler-gated-v1-carry-muon-10h}
+export EXP_NAME=${EXP_NAME:-350m-llama2-fwe1b-cler-gated-v1-carry-muon-compile10h}
 export EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-585}
 export EVAL_INTERVAL=${EVAL_INTERVAL:-100}
 export EVAL_ITERS=${EVAL_ITERS:-10}
 export MEGATRON_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-1}
 export MEGATRON_LINEAR_TORCH_COMPILE_MODE=${MEGATRON_LINEAR_TORCH_COMPILE_MODE:-reduce-overhead}
 export MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS=${MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS:-0}
+export CLER_RESIDUAL_LOG_INTERVAL=${CLER_RESIDUAL_LOG_INTERVAL:-10}
 exec _research/launch/run_350m_finewebedu_llama2_compare.sh cler_muon
