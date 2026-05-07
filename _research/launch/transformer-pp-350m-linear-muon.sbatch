@@ -7,6 +7,7 @@
 #   deltanet     - DeltaNet baseline
 #   deltanet_pytorch - pure PyTorch DeltaNet baseline
 #   cler_deltanet_pytorch - CLER v1 on pure PyTorch DeltaNet
+#   linear_transformer_pytorch - pure additive linear-transformer baseline
 #
 # Required environment:
 #   MEGATRON_DATA_PATH=/path/to/fineweb_edu_*_text_document
@@ -215,8 +216,23 @@ case "$LINEAR_VARIANT" in
         APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon
         EXP_NAME_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon-$GIT_SHA
         ;;
+    linear_transformer_pytorch)
+        LINEAR_ARGS=(
+            --experimental-attention-variant linear_transformer_pytorch
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-128}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-4}
+        )
+        WANDB_ARCH_DEFAULT=linear-transformer-pytorch
+        APERTUS_FEATURE_DEFAULT=linear-transformer-pytorch-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-linear-transformer-pytorch-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-linear-transformer-pytorch-muon-$GIT_SHA
+        ;;
     *)
-        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, deltanet, deltanet_pytorch, or cler_deltanet_pytorch)" >&2
+        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, deltanet, deltanet_pytorch, cler_deltanet_pytorch, or linear_transformer_pytorch)" >&2
         exit 1
         ;;
 esac
