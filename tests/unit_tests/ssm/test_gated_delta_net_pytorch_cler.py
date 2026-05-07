@@ -1,5 +1,6 @@
 import pathlib
 import sys
+from types import SimpleNamespace
 
 import torch
 
@@ -13,6 +14,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 )
 from megatron.core.ssm.gated_delta_net_pytorch import torch_chunk_gated_delta_rule
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.transformer_block import TransformerBlock
 
 
 def _make_rule_inputs(seq_len=1, batch=1, heads=2, head_dim=3):
@@ -126,6 +128,39 @@ def test_cler_rejects_non_pytorch_gated_delta_net_variant():
         cler_enabled=True,
         contains="gated_delta_net_pytorch",
     )
+
+
+def test_cler_residual_carries_across_non_cler_layers():
+    block = SimpleNamespace(config=SimpleNamespace(cler_enabled=True))
+    residual = torch.tensor([1.0])
+    non_cler_layer = SimpleNamespace(supports_cler=False)
+
+    next_residual = TransformerBlock._get_next_cler_residual(
+        block, non_cler_layer, residual
+    )
+
+    assert next_residual is residual
+
+
+def test_cler_layer_replaces_carried_residual():
+    block = SimpleNamespace(config=SimpleNamespace(cler_enabled=True))
+    previous_residual = torch.tensor([1.0])
+    produced_residual = torch.tensor([2.0])
+    cler_layer = SimpleNamespace(supports_cler=True, cler_residual=produced_residual)
+
+    next_residual = TransformerBlock._get_next_cler_residual(
+        block, cler_layer, previous_residual
+    )
+
+    assert next_residual is produced_residual
+
+
+def test_cler_residual_is_cleared_when_cler_disabled():
+    block = SimpleNamespace(config=SimpleNamespace(cler_enabled=False))
+    residual = torch.tensor([1.0])
+    non_cler_layer = SimpleNamespace(supports_cler=False)
+
+    assert TransformerBlock._get_next_cler_residual(block, non_cler_layer, residual) is None
 
 
 def _run_directly():

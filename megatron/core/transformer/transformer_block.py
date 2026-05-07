@@ -439,10 +439,14 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
     def _get_layer(self, layer_number: int):
         return self.layers[layer_number]
 
-    def _get_next_cler_residual(self, layer) -> Optional[Tensor]:
-        if self.config.cler_enabled and getattr(layer, "supports_cler", False):
+    def _get_next_cler_residual(
+        self, layer, current_cler_residual: Optional[Tensor] = None
+    ) -> Optional[Tensor]:
+        if not self.config.cler_enabled:
+            return None
+        if getattr(layer, "supports_cler", False):
             return getattr(layer, "cler_residual", None)
-        return None
+        return current_cler_residual
 
     def _checkpointed_forward(
         self,
@@ -518,7 +522,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             padding_mask=padding_mask,
                             cler_residual=cler_residual,
                         )
-                    cler_residual = self._get_next_cler_residual(layer)
+                    cler_residual = self._get_next_cler_residual(layer, cler_residual)
                 return hidden_states, context
 
             return custom_forward
@@ -858,7 +862,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             padding_mask=padding_mask,
                             cler_residual=cler_residual,
                         )
-                    cler_residual = self._get_next_cler_residual(layer)
+                    cler_residual = self._get_next_cler_residual(layer, cler_residual)
 
                     if (
                         torch.is_grad_enabled()
