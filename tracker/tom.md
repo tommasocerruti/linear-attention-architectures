@@ -311,3 +311,57 @@ Open full-size image:
 ![Clariden 1B baseline comparison](week3/clariden_1b_baseline_comparison_2026-05-07.png)
 
 ## Week 4
+
+Ran the full zero-shot `lm_eval` suite on the three 350M native Megatron
+checkpoints from the `20260507-1855` 1B-token family:
+
+- Transformer++ / FineWeb Muon
+- GDN Muon
+- DeltaNet Muon
+
+The three tasks test different commonsense abilities:
+
+- **HellaSwag**: choose the most plausible ending to a short scenario.
+- **PIQA**: choose the better answer for a physical-interaction question.
+- **WinoGrande**: resolve an ambiguous pronoun using commonsense context.
+
+I evaluated the native Megatron checkpoints directly, without HF conversion. The
+setup used `lm_eval` with the local static Megatron text-generation server,
+remote tokenizer endpoints, and loglikelihood scoring through
+`local-completions`:
+
+```bash
+SERVER_IMPL=static
+SERVER_EXTRA_ARGS="--transformer-impl local --attention-backend unfused --no-persist-layer-norm"
+TASKS="hellaswag,piqa,winogrande"
+LIMIT unset
+```
+
+All three runs loaded checkpoint iteration `1907` and completed the full eval
+end to end.
+
+| Model | HellaSwag acc_norm | PIQA acc_norm | WinoGrande acc |
+| --- | ---: | ---: | ---: |
+| Transformer++ | 0.2584 | 0.5087 | 0.4980 |
+| GDN | 0.2576 | 0.5103 | 0.4925 |
+| DeltaNet | 0.2538 | 0.4973 | 0.4862 |
+
+Here `acc` is the raw multiple-choice accuracy from plain continuation
+loglikelihood scoring. `acc_norm` uses length-normalized continuation scores,
+which helps reduce the model's bias toward shorter answer options, so it is
+usually the more informative metric on tasks like HellaSwag and PIQA. I report
+WinoGrande with plain `acc` because that is the primary metric emitted by this
+harness run.
+
+The result JSONs and logs live under:
+
+- [`_research/results/eval/transformer-pp-350m-fineweb-muon-1b-lm-eval-full-3tasks/`](../_research/results/eval/transformer-pp-350m-fineweb-muon-1b-lm-eval-full-3tasks/)
+- [`_research/results/eval/transformer-pp-350m-gdn-muon-1b-lm-eval-full-3tasks/`](../_research/results/eval/transformer-pp-350m-gdn-muon-1b-lm-eval-full-3tasks/)
+- [`_research/results/eval/transformer-pp-350m-deltanet-muon-1b-lm-eval-full-3tasks/`](../_research/results/eval/transformer-pp-350m-deltanet-muon-1b-lm-eval-full-3tasks/)
+
+Short read: the models are very close at this scale and training point. GDN is
+slightly ahead on PIQA, Transformer++ is slightly ahead on HellaSwag and
+WinoGrande, and DeltaNet is slightly lower across the three tasks. The gaps are
+small, so I would not claim a decisive quality difference from this eval alone.
+The main result is that the native-Megatron `lm_eval` path now works end to end
+for all three implementations.
