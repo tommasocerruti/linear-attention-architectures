@@ -4,13 +4,14 @@
 import os
 import sys
 import warnings
-from functools import partial
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
-import os
-import sys
 from argparse import Namespace
 from contextlib import nullcontext
+from functools import partial
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir))
+if REPO_ROOT in sys.path:
+    sys.path.remove(REPO_ROOT)
+sys.path.insert(0, REPO_ROOT)
 
 import torch
 
@@ -33,12 +34,9 @@ from megatron.post_training.arguments import add_modelopt_args
 from megatron.training import get_model, print_rank_0
 from model_provider import model_provider
 
-sys.path.append(
-    os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir))
-)
-
 from megatron.core import mpu
 from megatron.training import get_args, get_model, get_tokenizer
+from megatron.training.arguments import parse_and_validate_args
 from megatron.training.checkpointing import load_checkpoint
 from megatron.training.initialize import initialize_megatron
 
@@ -60,7 +58,13 @@ def get_inference_engine(args: Namespace, model: MegatronModule) -> AbstractEngi
 
     tokenizer = get_tokenizer()
 
-    inference_context = StaticInferenceContext(args.inference_max_requests, args.inference_max_sequence_length)
+    max_sequence_length = getattr(
+        args, "inference_max_seq_length", getattr(args, "inference_max_sequence_length", None)
+    )
+    if max_sequence_length is None:
+        raise AttributeError("Expected inference max sequence length argument to be set")
+
+    inference_context = StaticInferenceContext(args.inference_max_requests, max_sequence_length)
     inference_wrapped_model = GPTInferenceWrapper(
         model, inference_context
     )
@@ -69,6 +73,7 @@ def get_inference_engine(args: Namespace, model: MegatronModule) -> AbstractEngi
     )
     return StaticInferenceEngine(
         text_generation_controller=text_generation_controller,
+        legacy=True,
     )
 
 
@@ -77,6 +82,12 @@ def add_text_generate_args(parser):
     group = parser.add_argument_group(title='text generation')
     group.add_argument(
         "--port", type=int, default=5000, help='port for text generation server to run on'
+    )
+    group.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help='host interface for text generation server to bind to',
     )
     group.add_argument("--temperature", type=float, default=1.0, help='Sampling temperature.')
     group.add_argument("--top_k", type=int, default=1, help='Top k sampling.')
@@ -113,14 +124,16 @@ def add_text_generate_args(parser):
 @torch.inference_mode()
 def main(model_type: str = "gpt"):
     """Runs the text generation server with the specified model type."""
-    initialize_megatron(
+    parse_and_validate_args(
         extra_args_provider=add_text_generate_args,
         args_defaults={
             'no_load_rng': True,
             'no_load_optim': True,
+            'micro_batch_size': 1,
             'exit_on_missing_checkpoint': True,
         },
     )
+    initialize_megatron()
     args = get_args()
     if args.num_layers_per_virtual_pipeline_stage is not None:
         print("Interleaved pipeline schedule is not yet supported for text generation.")
@@ -165,7 +178,7 @@ def main(model_type: str = "gpt"):
         and mpu.get_expert_model_parallel_rank() == 0
     ):
         server = MegatronServer(inference_engine, args)
-        server.run("0.0.0.0", port=args.port)
+        server.run(args.host, port=args.port)
 
     while True:
         choice = torch.tensor(1, dtype=torch.long, device='cuda')
