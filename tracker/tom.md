@@ -283,3 +283,31 @@ Open full-size image:
 [clariden_1b_baseline_comparison_2026-04-28.png](week2/clariden_1b_baseline_comparison_2026-04-28.png)
 
 ![Clariden 1B baseline comparison](week2/clariden_1b_baseline_comparison_2026-04-28.png)
+
+## Week 3
+
+### 1B Clariden Results (updated)
+
+The final `1B` comparison now includes both the original AdamW runs and the
+finalized Muon reruns on the same FineWeb-Edu + LLaMA-2 setup. The Muon rows
+below come from the finalized `24L` Transformer++, `22L` GDN, and `24L`
+DeltaNet reruns, so the comparison is optimizer-only.
+
+| Baseline | Optimizer | Final train loss | Final val loss | Val PPL | Throughput (ktokens/s/GPU) | Throughput (TFLOP/s/GPU) | Elapsed |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Transformer++ softmax | AdamW | 2.9111 | 2.9019 | 18.2095 | 144.8 | 334.6 | 00:31:30 |
+| Transformer++ softmax | Muon | 2.7134 | 2.7240 | 15.2410 | 136.7 | 316.0 | 00:32:22 |
+| Gated DeltaNet | AdamW | 2.8587 | 2.8562 | 17.3950 | 159.5 | 298.6 | 00:27:47 |
+| Gated DeltaNet | Muon | 2.6965 | 2.7097 | 15.0254 | 154.8 | 289.6 | 00:28:44 |
+| DeltaNet | AdamW | 2.9484 | 2.9391 | 18.8987 | 153.4 | 296.8 | 00:28:45 |
+| DeltaNet | Muon | 2.6990 | 2.7137 | 15.0847 | 146.7 | 283.7 | 00:30:00 |
+
+Full W&B workspace:
+[megatron-lm-research-baseline](https://wandb.ai/tommasocerruti-eth-z-rich/megatron-lm-research-baseline?nw=nwusertommasocerruti)
+
+Open full-size image:
+[clariden_1b_baseline_comparison_2026-04-28.png](week3/clariden_1b_baseline_comparison_2026-05-07.png)
+
+![Clariden 1B baseline comparison](week3/clariden_1b_baseline_comparison_2026-05-07.png)
+
+## Week 4
