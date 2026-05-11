@@ -1,23 +1,18 @@
 #!/bin/bash
 #
-# Pure KDA ~350M smoke run on 1 GH200 node (4 GPUs).
-# 20L / 1024H / 2816F / 16h / 4kv (GQA), all attention layers use KDA.
-# SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
+# Native KDA ~350M on 1 GPU, 500 iterations.
+# For correctness comparison against FLA-wrapper smoke test.
+# Same model/optimizer config as transformer-pp-350m-kda.sbatch.
 #
-# Requires MEGATRON_DATA_PATH to point at the FineWeb-Edu Megatron prefix
-# produced by _research/data/convert_fineweb_edu.sbatch.
-#
-# KDA currently supports DP/TP/CP in this repo, but not --sequence-parallel.
-#
-#SBATCH --job-name=transformer-pp-350m-kda-smoke
+#SBATCH --job-name=kda-native-smoke
 #SBATCH --account=lsaie-ss26
-#SBATCH --partition=debug
-#SBATCH --time=00:45:00
+#SBATCH --partition=normal
+#SBATCH --time=02:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
-#SBATCH --gpus-per-node=4
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --mem=460000
 #SBATCH --no-requeue
@@ -63,44 +58,29 @@ NUM_HEADS=${NUM_HEADS:-16}
 NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
 MBS=${MBS:-16}
-GBS=${GBS:-128}
+GBS=${GBS:-16}
 SEQ_LEN=${SEQ_LEN:-4096}
-TRAIN_SAMPLES=${TRAIN_SAMPLES:-244141}
-TRAIN_ITERS=${TRAIN_ITERS:-50}
-EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-25}
+TRAIN_ITERS=${TRAIN_ITERS:-500}
+EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-115}
 LR=${LR:-3e-4}
 MIN_LR=${MIN_LR:-3e-5}
-LINEAR_ATTENTION_PATTERN=${LINEAR_ATTENTION_PATTERN:-([1]*20)}
-
-TP=${TP:-1}
-PP=1
-CP=${CP:-1}
-KDA_USE_FLASHKDA=${KDA_USE_FLASHKDA:-0}
+LINEAR_ATTENTION_PATTERN=${LINEAR_ATTENTION_PATTERN:-"'([1]*20)'"}
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=${EXP_NAME:-transformer-pp-350m-kda-smoke-$(git rev-parse --short HEAD)}
+EXP_NAME=${EXP_NAME:-kda-native-smoke-$(git rev-parse --short HEAD)}
 
-if [ -n "$TRAIN_ITERS" ]; then
-    TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
-    EVAL_INTERVAL=${EVAL_INTERVAL:-25}
-    LR_DURATION_ARGS=(
-        --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
-        --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
-        --lr-wsd-decay-iters ${LR_WSD_DECAY_ITERS:-10}
-    )
-else
-    TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
-    EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_SAMPLES}
-    LR_DURATION_ARGS=(
-        --lr-warmup-samples 25600
-        --lr-wsd-decay-samples 732422
-    )
-fi
-EVAL_ITERS=${EVAL_ITERS:-1}
+TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
+EVAL_INTERVAL=$TRAIN_ITERS
+LR_DURATION_ARGS=(
+    --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
+    --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
+    --lr-wsd-decay-iters ${LR_WSD_DECAY_ITERS:-10}
+)
+EVAL_ITERS=${EVAL_ITERS:-0}
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
 export APERTUS_FEATURE=kda
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-kda-smoke}
+export APERTUS_TRACK=${APERTUS_TRACK:-kda-native-smoke}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -137,9 +117,6 @@ KDA_ARGS=(
     --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
     --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
 )
-if [ "$KDA_USE_FLASHKDA" = "1" ]; then
-    KDA_ARGS+=(--kda-use-flashkda)
-fi
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS
@@ -185,11 +162,9 @@ MIXED_PRECISION_ARGS=(
 )
 
 DISTRIBUTED_ARGS=(
-    --tensor-model-parallel-size $TP
-    --pipeline-model-parallel-size $PP
-    --context-parallel-size $CP
-    --use-distributed-optimizer
-    --overlap-grad-reduce
+    --tensor-model-parallel-size 1
+    --pipeline-model-parallel-size 1
+    --context-parallel-size 1
 )
 
 LOGGING_ARGS=(
@@ -214,15 +189,6 @@ DATA_ARGS=(
     --num-workers 4
 )
 
-RECOMPUTE_ARGS=()
-if [ "${RECOMPUTE:-0}" = "1" ]; then
-    RECOMPUTE_ARGS=(
-        --recompute-granularity full
-        --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
-    )
-fi
-
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
@@ -233,7 +199,6 @@ MEGATRON_ARGS="\
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
-    ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
@@ -243,7 +208,7 @@ export WANDB_KERNEL=triton
 export WANDB_OPTIMIZER=adamw
 export WANDB_MODEL_SIZE=350M
 export WANDB_SEQ_LEN=$SEQ_LEN
-export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-1}
+export WANDB_IS_SMOKE=1
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT

@@ -1114,12 +1114,6 @@ class TransformerConfig(ModelParallelConfig):
                     f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
                     f"linear_num_key_heads ({self.linear_num_key_heads}) for KDA."
                 )
-                if self.sequence_parallel:
-                    raise ValueError(
-                        "KDA multi-GPU training supports DP/TP/CP in this milestone, but "
-                        "--sequence-parallel is not yet supported. Disable "
-                        "--sequence-parallel for --experimental-attention-variant kda."
-                    )
                 if self.kda_use_fla_wrapper and (
                     self.tensor_model_parallel_size != 1 or self.context_parallel_size != 1
                 ):

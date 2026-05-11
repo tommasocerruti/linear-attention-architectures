@@ -86,12 +86,6 @@ class KimiDeltaAttention(MegatronModule):
 
         super().__init__(config)
 
-        if config.sequence_parallel:
-            raise ValueError(
-                "KDA multi-GPU training supports DP/TP/CP in this milestone, but "
-                "--sequence-parallel is not yet supported. Disable --sequence-parallel "
-                "for --experimental-attention-variant kda."
-            )
         if config.deterministic_mode:
             raise NotImplementedError("KDA does not support deterministic_mode in this wrapper.")
 
@@ -189,6 +183,8 @@ class KimiDeltaAttention(MegatronModule):
             device=bottleneck_device,
             dtype=self.config.params_dtype,
         )
+        if config.sequence_parallel:
+            setattr(self.bottleneck_proj.weight, "sequence_parallel", True)
 
         self.f_out_proj = build_module(
             submodules.f_out_proj,

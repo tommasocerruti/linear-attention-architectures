@@ -1,107 +1,88 @@
 #!/bin/bash
 #
-# Quick 1-GPU KDA hybrid + NorMuon validation on GPT-2-tokenized ClimbMix.
+# Native KDA ~350M on 1 GPU, 500 iterations, Muon optimizer.
+# For correctness comparison against FLA-wrapper Muon smoke test.
+# Same model/optimizer config as transformer-pp-350m-kda-muon.sbatch.
 #
-#SBATCH --job-name=quick-kda-1gpu-muon-climbmix
+#SBATCH --job-name=kda-muon-native-smoke
 #SBATCH --account=lsaie-ss26
-#SBATCH --partition=debug
-#SBATCH --time=00:30:00
+#SBATCH --partition=normal
+#SBATCH --time=02:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
-#SBATCH --mem=115000
+#SBATCH --mem=460000
 #SBATCH --no-requeue
 
 set -euo pipefail
-
-DEFAULT_MEGATRON_DATA_PATH=/capstor/store/cscs/swissai/infra01/datasets/nvidia/Nemotron-ClimbMix/climbmix_small_megatron/climbmix_small
-MEGATRON_DATA_PATH=${MEGATRON_DATA_PATH:-$DEFAULT_MEGATRON_DATA_PATH}
-if [ ! -f "${MEGATRON_DATA_PATH}.idx" ] || [ ! -f "${MEGATRON_DATA_PATH}.bin" ]; then
-    echo "ERROR: dataset prefix not found: $MEGATRON_DATA_PATH" >&2
+: "${MEGATRON_DATA_PATH:?please set MEGATRON_DATA_PATH to the FineWeb-Edu Megatron-binary dataset prefix (without .bin/.idx), e.g. /path/to/fineweb_edu_15b_llama2_text_document}"
+: "${LLAMA2_TOKENIZER_MODEL:?please set LLAMA2_TOKENIZER_MODEL to a local LLaMA-2 tokenizer.model path}"
+if [ ! -f "$LLAMA2_TOKENIZER_MODEL" ]; then
+    echo "ERROR: tokenizer model not found: $LLAMA2_TOKENIZER_MODEL" >&2
     exit 1
 fi
-
 echo "START TIME: $(date)"
-echo "MEGATRON_DATA_PATH: $MEGATRON_DATA_PATH"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
-SCRIPT_PATH=$(scontrol show job "$SLURM_JOB_ID" -o | sed -n 's/.* Command=\([^ ]*\).*/\1/p')
-if [ -n "$SCRIPT_PATH" ]; then
-    REPO_DIR=$(cd "$(dirname "$SCRIPT_PATH")/../.." && pwd)
-else
-    REPO_DIR=${CLER_REPO_DIR:-${SLURM_SUBMIT_DIR:-$PWD}}
-fi
-WORKDIR=$REPO_DIR
-SCRATCH_ROOT=${SCRATCH:-/iopsstor/scratch/cscs/$USER}
-SCRATCH_REPO_DIR=$SCRATCH_ROOT/cler
-PACKAGE_DIR=$SCRATCH_REPO_DIR/_research/packages
-DATASET_CACHE_DIR=$SCRATCH_REPO_DIR/cache/dataset
-TMP_CACHE_DIR=$SCRATCH_REPO_DIR/cache/tmp
-
+REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
+WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
 cd $WORKDIR
+
+PACKAGE_DIR=$REPO_DIR/_research/packages
+DATASET_CACHE_DIR=$REPO_DIR/cache/dataset
+TMP_CACHE_DIR=$REPO_DIR/cache/tmp
 
 export PYTHONPATH=$WORKDIR:$PACKAGE_DIR:$WORKDIR${PYTHONPATH:+:$PYTHONPATH}
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export TORCH_NCCL_ASYNC_ERROR_HANDLING=1
 export TORCH_CPP_LOG_LEVEL=WARNING
-export TRITON_CACHE_DIR=$SCRATCH_REPO_DIR/cache/triton
-export TORCHINDUCTOR_CACHE_DIR=$SCRATCH_REPO_DIR/cache/inductor
+export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
+export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
 
-mkdir -p \
-    $PACKAGE_DIR \
-    $DATASET_CACHE_DIR \
-    $TMP_CACHE_DIR \
-    $TRITON_CACHE_DIR \
-    $TORCHINDUCTOR_CACHE_DIR \
-    $SCRATCH_REPO_DIR/_research/results/runs \
-    $SCRATCH_REPO_DIR/_research/results/performance \
-    $WORKDIR/_research/results/runs
+mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACHE_DIR $PACKAGE_DIR _research/results/runs _research/results/performance
 
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)
 MASTER_PORT=25678
 
-NUM_LAYERS=${NUM_LAYERS:-6}
-HIDDEN=${HIDDEN:-512}
-FFN_HIDDEN=${FFN_HIDDEN:-1408}
-NUM_HEADS=${NUM_HEADS:-8}
-NUM_KV_HEADS=${NUM_KV_HEADS:-2}
+NUM_LAYERS=${NUM_LAYERS:-20}
+HIDDEN=${HIDDEN:-1024}
+FFN_HIDDEN=${FFN_HIDDEN:-2816}
+NUM_HEADS=${NUM_HEADS:-16}
+NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
-MBS=${MBS:-4}
-GBS=${GBS:-8}
-SEQ_LEN=${SEQ_LEN:-1024}
-TRAIN_ITERS=${TRAIN_ITERS:-200}
-EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-40}
-EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_ITERS}
-EVAL_ITERS=${EVAL_ITERS:-0}
-LR=${LR:-3.6e-4}
-MIN_LR=${MIN_LR:-3.6e-5}
-LINEAR_ATTENTION_PATTERN=${LINEAR_ATTENTION_PATTERN:-([1]*6)}
-
-TP=1
-PP=1
-CP=1
-# Set KDA_USE_FLASHKDA=1 to let FLA try the FlashKDA backend. Default stays on Triton.
-KDA_USE_FLASHKDA=${KDA_USE_FLASHKDA:-0}
-KDA_USE_FLA_WRAPPER=${KDA_USE_FLA_WRAPPER:-0}
-
-KDA_IMPL_NAME=kda
-if [ "$KDA_USE_FLA_WRAPPER" = "1" ]; then
-    KDA_IMPL_NAME=kda-fla-wrapper
-fi
+MBS=${MBS:-16}
+GBS=${GBS:-16}
+SEQ_LEN=${SEQ_LEN:-4096}
+TRAIN_ITERS=${TRAIN_ITERS:-500}
+EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-115}
+MUON_LR=${MUON_LR:-3.6e-4}
+LR=$MUON_LR
+MIN_LR=$(python3 -c "print(f'{float(\"$MUON_LR\")/10:.2e}')")
+MUON_SCALAR_LR=$(python3 -c "print(f'{float(\"$MUON_LR\")*1.5e-3/3.6e-4:.2e}')")
+LINEAR_ATTENTION_PATTERN=${LINEAR_ATTENTION_PATTERN:-"'([1]*20)'"}
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-GIT_SHORT_HASH=$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo nogit)
-EXP_NAME=${EXP_NAME:-quick-$KDA_IMPL_NAME-1gpu-muon-climbmix-$GIT_SHORT_HASH}
+EXP_NAME=${EXP_NAME:-kda-muon-native-smoke-$(git rev-parse --short HEAD)}
 
-export APERTUS_LOG_DIR=$SCRATCH_REPO_DIR/_research/results/performance
-export APERTUS_FEATURE=$KDA_IMPL_NAME-muon
-export APERTUS_TRACK=${APERTUS_TRACK:-quick-kda-1gpu-muon}
+TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
+EVAL_INTERVAL=$TRAIN_ITERS
+LR_DURATION_ARGS=(
+    --lr-warmup-iters ${LR_WARMUP_ITERS:-5}
+    --lr-decay-iters ${LR_DECAY_ITERS:-$TRAIN_ITERS}
+    --lr-wsd-decay-iters ${LR_WSD_DECAY_ITERS:-10}
+)
+EVAL_ITERS=${EVAL_ITERS:-0}
+
+export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
+export APERTUS_FEATURE=kda-muon
+export APERTUS_TRACK=${APERTUS_TRACK:-kda-muon-native-smoke}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -132,23 +113,17 @@ NETWORK_SIZE_ARGS=(
 KDA_ARGS=(
     --experimental-attention-variant kda
     --linear-attention-freq "$LINEAR_ATTENTION_PATTERN"
-    --linear-conv-kernel-dim 4
-    --linear-key-head-dim 64
-    --linear-value-head-dim 64
-    --linear-num-key-heads 4
-    --linear-num-value-heads 8
+    --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+    --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+    --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
+    --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+    --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
 )
-if [ "$KDA_USE_FLASHKDA" = "1" ]; then
-    KDA_ARGS+=(--kda-use-flashkda)
-fi
-if [ "$KDA_USE_FLA_WRAPPER" = "1" ]; then
-    KDA_ARGS+=(--kda-use-fla-wrapper)
-fi
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS
     --global-batch-size $GBS
-    --train-iters $TRAIN_ITERS
+    ${TRAIN_STOP_ARGS[@]}
     --exit-duration-in-mins $EXIT_DURATION_IN_MINS
     --log-interval 1
     --eval-interval $EVAL_INTERVAL
@@ -175,7 +150,7 @@ MUON_ARGS=(
     --muon-scale-mode spectral
     --muon-nesterov
     --muon-momentum 0.95
-    --muon-scalar-lr 1.5e-3
+    --muon-scalar-lr $MUON_SCALAR_LR
     --muon-scalar-weight-decay 0.0
     --adaptive-muon-moment2-method normuon
 )
@@ -183,9 +158,9 @@ MUON_ARGS=(
 LEARNING_RATE_ARGS=(
     --lr $LR
     --min-lr $MIN_LR
-    --lr-decay-style cosine
-    --lr-warmup-iters 20
-    --lr-decay-iters $TRAIN_ITERS
+    --lr-decay-style WSD
+    --lr-wsd-decay-style minus_sqrt
+    ${LR_DURATION_ARGS[@]}
 )
 
 INITIALIZATION_ARGS=(
@@ -198,9 +173,9 @@ MIXED_PRECISION_ARGS=(
 )
 
 DISTRIBUTED_ARGS=(
-    --tensor-model-parallel-size $TP
-    --pipeline-model-parallel-size $PP
-    --context-parallel-size $CP
+    --tensor-model-parallel-size 1
+    --pipeline-model-parallel-size 1
+    --context-parallel-size 1
 )
 
 LOGGING_ARGS=(
@@ -208,15 +183,14 @@ LOGGING_ARGS=(
     --log-progress
     --log-memory-to-tensorboard
     --log-params-norm
-    --tensorboard-dir $SCRATCH_REPO_DIR/_research/results/runs/tb-$SLURM_JOB_ID
+    --tensorboard-dir $WORKDIR/_research/results/runs/tb-$SLURM_JOB_ID
     --tensorboard-log-interval 1
     --log-timers-to-tensorboard
 )
 
 TOKENIZER_ARGS=(
-    --tokenizer-type GPT2BPETokenizer
-    --vocab-file $WORKDIR/_research/data/gpt2-vocab.json
-    --merge-file $WORKDIR/_research/data/gpt2-merges.txt
+    --tokenizer-type Llama2Tokenizer
+    --tokenizer-model "$LLAMA2_TOKENIZER_MODEL"
 )
 
 DATA_ARGS=(
@@ -241,10 +215,17 @@ MEGATRON_ARGS="\
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
 
+export WANDB_ARCH=kda
+export WANDB_KERNEL=triton
+export WANDB_OPTIMIZER=muon
+export WANDB_MODEL_SIZE=350M
+export WANDB_SEQ_LEN=$SEQ_LEN
+export WANDB_IS_SMOKE=1
+
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
-    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $SCRATCH_REPO_DIR/_research/results/runs"
+    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
 else
     export WANDB_MODE=disabled
 fi

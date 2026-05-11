@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# Pure KDA ~350M baseline on 1 GH200 node (4 GPUs).
-# 20L / 1024H / 2816F / 16h / 4kv (GQA), all attention layers use KDA.
+# Hybrid KDA ~350M baseline on 1 GH200 node (4 GPUs).
+# 20L / 1024H / 2816F / 16h / 4kv (GQA), with a 2:1 KDA:SDPA layer pattern.
 # SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
 # 1B tokens on FineWeb-Edu, ~1908 steps at 524K tokens/step.
 #
 # Requires MEGATRON_DATA_PATH to point at the FineWeb-Edu Megatron prefix
 # produced by _research/data/convert_fineweb_edu.sbatch.
 #
-# KDA currently supports DP/TP/CP in this repo, but not --sequence-parallel.
+# KDA supports DP/TP/CP/SP in this repo.
 #
 #SBATCH --job-name=transformer-pp-350m-kda
 #SBATCH --account=lsaie-ss26
@@ -71,7 +71,9 @@ TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=${LR:-3e-4}
 MIN_LR=${MIN_LR:-3e-5}
-LINEAR_ATTENTION_PATTERN=${LINEAR_ATTENTION_PATTERN:-([1]*20)}
+# For a custom per-layer pattern instead of the integer freq, use e.g.:
+#   LINEAR_ATTENTION_FREQ="'([1]*20)'"   (pure KDA, all 20 layers)
+#   LINEAR_ATTENTION_FREQ="'([1,1,0]*7)[:20]'"  (explicit 2:1 KDA:SDPA)
 
 TP=${TP:-1}
 PP=1
@@ -132,7 +134,7 @@ NETWORK_SIZE_ARGS=(
 
 KDA_ARGS=(
     --experimental-attention-variant kda
-    --linear-attention-freq "$LINEAR_ATTENTION_PATTERN"
+    --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
     --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
     --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
     --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
@@ -192,6 +194,7 @@ DISTRIBUTED_ARGS=(
     --context-parallel-size $CP
     --use-distributed-optimizer
     --overlap-grad-reduce
+    --sequence-parallel
 )
 
 LOGGING_ARGS=(
@@ -216,6 +219,13 @@ DATA_ARGS=(
     --num-workers 4
 )
 
+CHECKPOINT_ARGS=(
+    --save $WORKDIR/_research/results/checkpoints/$EXP_NAME
+    --save-interval ${SAVE_INTERVAL:-1000}
+    --ckpt-format torch
+)
+mkdir -p $WORKDIR/_research/results/checkpoints/$EXP_NAME
+
 RECOMPUTE_ARGS=()
 if [ "${RECOMPUTE:-0}" = "1" ]; then
     RECOMPUTE_ARGS=(
@@ -236,6 +246,7 @@ MEGATRON_ARGS="\
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
     ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
+    ${CHECKPOINT_ARGS[@]} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"

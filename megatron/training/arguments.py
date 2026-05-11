@@ -2075,6 +2075,9 @@ def _add_network_size_args(parser):
         "num_moe_experts",
         "fp8_param",
         "fp4_param",
+        # registered manually in _add_experimental_attention_variant_args
+        "kda_use_flashkda",
+        "kda_use_fla_wrapper",
         # incompatible defaults in dataclass
         "gradient_accumulation_fusion",
         "overlap_p2p_comm",
