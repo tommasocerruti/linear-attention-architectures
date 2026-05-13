@@ -46,15 +46,56 @@ class CLERDeltaNet(DeltaNet):
         self.supports_cler = True
         self.cler_residual = None
         if self.config.cler_enabled:
-            self.cler_gamma = nn.Parameter(
-                torch.tensor(
-                    self.config.cler_gamma_init,
-                    dtype=self.config.params_dtype,
-                    device=torch.cuda.current_device(),
-                )
-            )
+            self.cler_gamma = self._make_cler_gamma_parameter()
         else:
             self.register_parameter("cler_gamma", None)
+
+    def _make_cler_gamma_parameter(self):
+        """Create the receiver-side CLER gate for this local attention shard."""
+        if self.config.cler_gamma_mode == "head":
+            if self.cp_size != 1:
+                raise NotImplementedError(
+                    "CLER per-head gamma is currently implemented for context parallel size 1."
+                )
+            gamma = torch.full(
+                (self.num_heads_local_tp,),
+                float(self.config.cler_gamma_init),
+                dtype=self.config.params_dtype,
+                device=torch.cuda.current_device(),
+            )
+            parameter = nn.Parameter(gamma)
+            setattr(parameter, "tensor_model_parallel", True)
+            setattr(parameter, "partition_dim", 0)
+            return parameter
+
+        return nn.Parameter(
+            torch.tensor(
+                self.config.cler_gamma_init,
+                dtype=self.config.params_dtype,
+                device=torch.cuda.current_device(),
+            )
+        )
+
+    def _cler_gamma_for_value(self, value: Tensor) -> Tensor:
+        gamma = self.cler_gamma.to(dtype=value.dtype)
+        if gamma.ndim == 0:
+            return gamma
+        if gamma.numel() != value.shape[2]:
+            raise ValueError(
+                "CLER per-head gamma must match the local DeltaNet value-head count, "
+                f"got {gamma.numel()=} and value heads={value.shape[2]}."
+            )
+        return gamma.view(1, 1, -1, 1)
+
+    def _maybe_normalize_cler_residual(self, cler_residual: Tensor) -> Tensor:
+        if not self.config.cler_normalize_residual:
+            return cler_residual
+        residual_fp32 = cler_residual.float()
+        scale = torch.rsqrt(
+            residual_fp32.square().mean(dim=-1, keepdim=True)
+            + self.config.cler_residual_norm_eps
+        )
+        return (residual_fp32 * scale).to(dtype=cler_residual.dtype)
 
     def forward(
         self,
@@ -156,7 +197,6 @@ class CLERDeltaNet(DeltaNet):
         nvtx_range_pop(suffix="prepare_qkv_for_delta_rule")
 
         if self.config.cler_enabled:
-            cler_gamma = self.cler_gamma.to(dtype=value.dtype)
             if cler_residual is not None:
                 if self.config.cler_detach_residual:
                     cler_residual = cler_residual.detach()
@@ -165,9 +205,10 @@ class CLERDeltaNet(DeltaNet):
                         "CLER residual shape must match the current DeltaNet value shape, "
                         f"got {cler_residual.shape=} and {value.shape=}."
                     )
-                value = value + cler_gamma * cler_residual
+                cler_residual = self._maybe_normalize_cler_residual(cler_residual)
+                value = value + self._cler_gamma_for_value(value) * cler_residual
             else:
-                value = value + cler_gamma * value.new_zeros(())
+                value = value + self._cler_gamma_for_value(value) * value.new_zeros(())
 
         nvtx_range_push(suffix="delta_rule")
         if self.config.cler_enabled:

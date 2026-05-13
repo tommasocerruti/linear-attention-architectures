@@ -120,6 +120,41 @@ def test_cler_accepts_pytorch_gated_delta_net_variant():
     assert config.cler_gamma_init == 0.125
 
 
+def test_cler_accepts_head_gamma_and_residual_norm_config():
+    config = _make_linear_config(
+        cler_enabled=True,
+        cler_gamma_init=0.01,
+        cler_gamma_mode="head",
+        cler_normalize_residual=True,
+        cler_residual_norm_eps=1e-5,
+    )
+
+    assert config.cler_gamma_mode == "head"
+    assert config.cler_normalize_residual
+    assert config.cler_residual_norm_eps == 1e-5
+
+
+def test_cler_rejects_invalid_gamma_mode():
+    _assert_raises(
+        ValueError,
+        _make_linear_config,
+        cler_enabled=True,
+        cler_gamma_mode="channel",
+        contains="cler_gamma_mode",
+    )
+
+
+def test_cler_rejects_nonpositive_residual_norm_eps():
+    _assert_raises(
+        ValueError,
+        _make_linear_config,
+        cler_enabled=True,
+        cler_normalize_residual=True,
+        cler_residual_norm_eps=0.0,
+        contains="cler_residual_norm_eps",
+    )
+
+
 def test_cler_rejects_non_pytorch_gated_delta_net_variant():
     _assert_raises(
         ValueError,

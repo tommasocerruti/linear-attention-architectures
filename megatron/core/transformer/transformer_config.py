@@ -281,6 +281,15 @@ class TransformerConfig(ModelParallelConfig):
     cler_gamma_init: float = 0.0
     """Initial value for the per-layer CLER residual routing scalar."""
 
+    cler_gamma_mode: Literal['scalar', 'head'] = 'scalar'
+    """CLER receiver weight shape: one scalar per layer or one scalar per local value head."""
+
+    cler_normalize_residual: bool = False
+    """RMS-normalize the routed CLER residual before injecting it into the current value tensor."""
+
+    cler_residual_norm_eps: float = 1e-6
+    """Numerical epsilon for CLER routed-residual RMS normalization."""
+
     cler_detach_residual: bool = False
     """Detach the routed CLER residual before injecting it into the next layer."""
 
@@ -1091,6 +1100,18 @@ class TransformerConfig(ModelParallelConfig):
                 "cler_enabled is currently only supported with "
                 "experimental_attention_variant='gated_delta_net_pytorch' or "
                 "'cler_delta_net_pytorch'."
+            )
+
+        if self.cler_gamma_mode not in {"scalar", "head"}:
+            raise ValueError(
+                "cler_gamma_mode must be either 'scalar' or 'head', "
+                f"got {self.cler_gamma_mode!r}."
+            )
+
+        if self.cler_residual_norm_eps <= 0.0:
+            raise ValueError(
+                "cler_residual_norm_eps must be positive, "
+                f"got {self.cler_residual_norm_eps}."
             )
 
         if self.experimental_attention_variant in {
