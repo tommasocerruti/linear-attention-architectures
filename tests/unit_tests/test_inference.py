@@ -123,3 +123,30 @@ def test_completions_endpoint(mock_send_do_generate, client, gpt2_tiktoken_token
     assert response.status_code == 405  # Method Not Allowed
 
     mock_send_do_generate.assert_called_once()
+
+
+@unittest.mock.patch(
+    "megatron.core.inference.text_generation_server.endpoints.completions.send_do_generate"
+)
+def test_completions_endpoint_supports_lm_eval_loglikelihood(
+    mock_send_do_generate, client, gpt2_tiktoken_tokenizer
+):
+    Utils.initialize_distributed()
+
+    twinkle = ("twinkle twinkle little star,", " how I wonder what you are")
+    request_data = {"prompt": twinkle[0] + twinkle[1], "max_tokens": 1, "logprobs": 1, "echo": True}
+
+    response = client.post('/completions', json=request_data)
+
+    assert response.status_code == 200
+    assert response.is_json
+
+    json_data = response.get_json()
+    logprobs = json_data["choices"][0]["logprobs"]
+    num_reconstructed_prompt_tokens = np.searchsorted(logprobs["text_offset"], len(twinkle[0]))
+
+    # lm-eval sums logprobs over the continuation tokens and drops the final generated token.
+    suffix_logprob = logprobs["token_logprobs"][num_reconstructed_prompt_tokens:-1]
+    assert sum(suffix_logprob) == 0, f"{suffix_logprob} != [0, .... 0]"
+
+    mock_send_do_generate.assert_called_once()

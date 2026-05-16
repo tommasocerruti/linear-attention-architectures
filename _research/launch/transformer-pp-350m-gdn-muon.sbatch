@@ -105,20 +105,23 @@ NO_SAVE_RNG=${NO_SAVE_RNG:-0}
 CHECKPOINT_ARGS=()
 if [ -n "$SAVE_DIR" ]; then
     if [ -z "$SAVE_INTERVAL" ]; then
-        echo "ERROR: set SAVE_INTERVAL when SAVE_DIR is set." >&2
+        echo "ERROR: SAVE_DIR requires SAVE_INTERVAL or TRAIN_ITERS." >&2
         exit 1
     fi
     mkdir -p "$SAVE_DIR"
-    CHECKPOINT_ARGS+=(--save "$SAVE_DIR" --save-interval "$SAVE_INTERVAL")
-    if [ -n "$CKPT_FORMAT" ]; then
-        CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
-    fi
-    if [ "$NO_SAVE_OPTIM" = "1" ]; then
-        CHECKPOINT_ARGS+=(--no-save-optim)
-    fi
-    if [ "$NO_SAVE_RNG" = "1" ]; then
-        CHECKPOINT_ARGS+=(--no-save-rng)
-    fi
+    CHECKPOINT_ARGS=(
+        --save "$SAVE_DIR"
+        --save-interval "$SAVE_INTERVAL"
+    )
+fi
+if [ -n "$CKPT_FORMAT" ]; then
+    CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
+fi
+if [ "$NO_SAVE_OPTIM" = "1" ]; then
+    CHECKPOINT_ARGS+=(--no-save-optim)
+fi
+if [ "$NO_SAVE_RNG" = "1" ]; then
+    CHECKPOINT_ARGS+=(--no-save-rng)
 fi
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
@@ -257,7 +260,7 @@ MEGATRON_ARGS="\
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
-    ${CHECKPOINT_ARGS[@]} \
+    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
