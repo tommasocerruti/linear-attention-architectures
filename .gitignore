@@ -14,8 +14,10 @@ onelogger.log
 onelogger.err
 .venv
 _research/results/
-_research/packages/
+_research/packages*/
 cache/
+core_*
+.pytest_cache/
 /test_cases/
 **/dist/
 
