@@ -267,6 +267,21 @@ class GatedDeltaNet(MegatronModule):
             setattr(parameter, "tensor_model_parallel", True)
             setattr(parameter, "partition_dim", 0)
             return parameter
+        if self.config.cler_gamma_mode == "channel":
+            if self.cp_size != 1:
+                raise NotImplementedError(
+                    "CLER per-channel gamma is currently implemented for context parallel size 1."
+                )
+            gamma = torch.full(
+                (self.num_v_heads_local_tp, self.value_head_dim),
+                float(self.config.cler_gamma_init),
+                dtype=self.config.params_dtype,
+                device=torch.cuda.current_device(),
+            )
+            parameter = nn.Parameter(gamma)
+            setattr(parameter, "tensor_model_parallel", True)
+            setattr(parameter, "partition_dim", 0)
+            return parameter
 
         return nn.Parameter(
             torch.tensor(
@@ -280,12 +295,24 @@ class GatedDeltaNet(MegatronModule):
         gamma = self.cler_gamma.to(dtype=value.dtype)
         if gamma.ndim == 0:
             return gamma
-        if gamma.numel() != value.shape[2]:
-            raise ValueError(
-                "CLER per-head gamma must match the local GDN value-head count, "
-                f"got {gamma.numel()=} and value heads={value.shape[2]}."
-            )
-        return gamma.view(1, 1, -1, 1)
+        if gamma.ndim == 1:
+            if gamma.numel() != value.shape[2]:
+                raise ValueError(
+                    "CLER per-head gamma must match the local GDN value-head count, "
+                    f"got {gamma.numel()=} and value heads={value.shape[2]}."
+                )
+            return gamma.view(1, 1, -1, 1)
+        if gamma.ndim == 2:
+            if tuple(gamma.shape) != tuple(value.shape[2:4]):
+                raise ValueError(
+                    "CLER per-channel gamma must match the local GDN value shape per token, "
+                    f"got gamma shape={tuple(gamma.shape)} and value shape={tuple(value.shape[2:4])}."
+                )
+            return gamma.view(1, 1, gamma.shape[0], gamma.shape[1])
+        raise ValueError(
+            "CLER gamma must be scalar, per-head, or per-channel, "
+            f"got shape={tuple(gamma.shape)}."
+        )
 
     def _maybe_normalize_cler_residual(self, cler_residual: Tensor) -> Tensor:
         if not self.config.cler_normalize_residual:

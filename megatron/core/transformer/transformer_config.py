@@ -281,8 +281,8 @@ class TransformerConfig(ModelParallelConfig):
     cler_gamma_init: float = 0.0
     """Initial value for the per-layer CLER residual routing scalar."""
 
-    cler_gamma_mode: Literal['scalar', 'head'] = 'scalar'
-    """CLER receiver weight shape: one scalar per layer or one scalar per local value head."""
+    cler_gamma_mode: Literal['scalar', 'head', 'channel'] = 'scalar'
+    """CLER receiver weight shape: one scalar per layer, local value head, or value channel."""
 
     cler_normalize_residual: bool = False
     """RMS-normalize the routed CLER residual before injecting it into the current value tensor."""
@@ -1102,9 +1102,9 @@ class TransformerConfig(ModelParallelConfig):
                 "'cler_delta_net_pytorch'."
             )
 
-        if self.cler_gamma_mode not in {"scalar", "head"}:
+        if self.cler_gamma_mode not in {"scalar", "head", "channel"}:
             raise ValueError(
-                "cler_gamma_mode must be either 'scalar' or 'head', "
+                "cler_gamma_mode must be one of 'scalar', 'head', or 'channel', "
                 f"got {self.cler_gamma_mode!r}."
             )
 
