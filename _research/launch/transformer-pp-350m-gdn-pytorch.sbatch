@@ -80,8 +80,8 @@ EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=${LR:-3e-4}
 MIN_LR=${MIN_LR:-3e-5}
 
-TP=1
-PP=1
+TP=${TP:-1}
+PP=${PP:-1}
 CP=${CP:-1}
 
 PROJECT=${WANDB_PROJECT:-clerv1-runs}
@@ -151,9 +151,14 @@ if [ "${CLER_ENABLED:-0}" = "1" ]; then
     CLER_ARGS=(
         --cler-enabled
         --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+        --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+        --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
     )
     if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
         CLER_ARGS+=(--cler-detach-residual)
+    fi
+    if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-normalize-residual)
     fi
 fi
 
@@ -237,7 +242,7 @@ if [ "${RECOMPUTE:-0}" = "1" ]; then
     RECOMPUTE_ARGS=(
         --recompute-granularity full
         --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
+        --recompute-num-layers ${RECOMPUTE_NUM_LAYERS:-$NUM_LAYERS}
     )
 fi
 
@@ -266,6 +271,9 @@ export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
 export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
 export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
+export WANDB_CLER_GAMMA_MODE=${CLER_GAMMA_MODE:-scalar}
+export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
+export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
 export WANDB_ENTITY=${WANDB_ENTITY:-cler}
 

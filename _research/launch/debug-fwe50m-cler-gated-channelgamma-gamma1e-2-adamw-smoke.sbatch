@@ -1,8 +1,13 @@
 #!/bin/bash
 #
-# Debug smoke for DeltaNet PyTorch on FineWeb-Edu 50M / LLaMA2.
+# Debug smoke for CLER-Gated per-channel-gamma AdamW on FineWeb-Edu 50M / LLaMA2.
 #
-#SBATCH --job-name=debug-fwe50m-dn-pytorch
+# Submit with:
+#   sbatch _research/launch/debug-fwe50m-cler-gated-channelgamma-gamma1e-2-adamw-smoke.sbatch
+#
+# This is the debug gate for the full AdamW per-channel CLER-Gated run.
+#
+#SBATCH --job-name=dbg-cler-g-cg-a
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=debug
 #SBATCH --time=00:45:00
@@ -27,26 +32,32 @@ export MEGATRON_DATA_PATH=/iopsstor/scratch/cscs/course_00252/cler/_research/res
 export LLAMA2_TOKENIZER_MODEL=/iopsstor/scratch/cscs/course_00252/llama2-tokenizer/tokenizer.model
 export WANDB_ENTITY=cler
 export WANDB_PROJECT=clerv1-runs
-export WANDB_GROUP=debug-fwe50m-architecture-smokes-20260506
+export WANDB_GROUP=debug-fwe50m-adamw-cler-channelgamma-20260518
 export WANDB_MODE=${WANDB_MODE:-online}
 export WANDB_DATASET=fineweb_edu_50m_llama2_smoke
 export WANDB_IS_SMOKE=1
-export WANDB_ARCH=deltanet-pytorch
+export WANDB_ARCH=cler-v1-gdn-pytorch-channelgamma
 export WANDB_KERNEL=torch
-export APERTUS_FEATURE=debug-delta-net-pytorch
-export APERTUS_TRACK=debug-fwe50m-deltanet-pytorch
-export DELTA_NET_VARIANT=delta_net_pytorch
-export CLER_ENABLED=0
-export EXP_NAME=debug-fwe50m-deltanet-pytorch
-export TRAIN_ITERS=2
+export APERTUS_FEATURE=debug-cler-gated-v1-channelgamma-gamma1e-2-adamw
+export APERTUS_TRACK=debug-fwe50m-cler-gated-v1-channelgamma-adamw
+export EXP_NAME=debug-cler-gated-v1-channelgamma-350m-llama2-fwe50m-adamw-gamma1e-2-compile
+export TRAIN_ITERS=8
 export LR_WARMUP_ITERS=1
-export EVAL_INTERVAL=2
+export EVAL_INTERVAL=8
 export EVAL_ITERS=0
 export EXIT_DURATION_IN_MINS=35
 export MBS=2
 export GBS=128
+export CLER_ENABLED=1
+export CLER_GAMMA_INIT=0.01
+export CLER_GAMMA_MODE=channel
+export CLER_NORMALIZE_RESIDUAL=0
+export CLER_RESIDUAL_NORM_EPS=1e-6
+export CLER_GAMMA_LOG_INTERVAL=1
+export CLER_RESIDUAL_LOG_INTERVAL=1
 export MEGATRON_LINEAR_TORCH_COMPILE=1
+export MEGATRON_LINEAR_TORCH_COMPILE_MODE=reduce-overhead
 export MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS=0
 
 cd /users/course_00252/cler
-exec bash _research/launch/transformer-pp-350m-deltanet.sbatch
+exec bash _research/launch/transformer-pp-350m-gdn-pytorch.sbatch

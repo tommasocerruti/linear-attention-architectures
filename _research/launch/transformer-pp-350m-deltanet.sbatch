@@ -151,6 +151,22 @@ DELTA_NET_ARGS=(
     --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-4}
 )
 
+CLER_ARGS=()
+if [ "${DELTA_NET_VARIANT:-delta_net}" = "cler_delta_net_pytorch" ]; then
+    CLER_ARGS=(
+        --cler-enabled
+        --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+        --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+        --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
+    )
+    if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-detach-residual)
+    fi
+    if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-normalize-residual)
+    fi
+fi
+
 TRAINING_ARGS=(
     --micro-batch-size $MBS
     --global-batch-size $GBS
@@ -239,6 +255,7 @@ MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${DELTA_NET_ARGS[@]} \
+    ${CLER_ARGS[@]+"${CLER_ARGS[@]}"} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
@@ -258,6 +275,14 @@ export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 export WANDB_ENTITY=${WANDB_ENTITY:-cler}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
+export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
+if [ "${DELTA_NET_VARIANT:-delta_net}" = "cler_delta_net_pytorch" ]; then
+    export WANDB_CLER_ENABLED=1
+fi
+export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
+export WANDB_CLER_GAMMA_MODE=${CLER_GAMMA_MODE:-scalar}
+export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
+export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
