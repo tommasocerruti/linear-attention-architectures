@@ -64,6 +64,33 @@ sbatch _research/launch/transformer-pp-350m-gdn-muon-15b.sbatch
 sbatch _research/launch/transformer-pp-350m-deltanet-muon-15b.sbatch
 ```
 
+The GDN and DeltaNet scripts above are hybrid linear-attention/SDPA runs. Their
+base launchers default to:
+
+```bash
+LINEAR_ATTENTION_FREQ=3
+```
+
+For the fully linear-attention DeltaRule comparison, run only the two variant
+scripts:
+
+```bash
+sbatch _research/launch/transformer-pp-350m-gdn-muon-15b-pure-deltarule.sbatch
+sbatch _research/launch/transformer-pp-350m-deltanet-muon-15b-pure-deltarule.sbatch
+```
+
+Those wrappers reuse the same 15B data, Muon, checkpointing, and tokenizer
+setup, but override the layer pattern to all linear-attention layers:
+
+```bash
+LINEAR_ATTENTION_FREQ="[1]*22"  # GDN, 22 layers
+LINEAR_ATTENTION_FREQ="[1]*24"  # DeltaNet, 24 layers
+```
+
+Transformer++ remains the softmax-attention baseline, so there is no separate
+pure DeltaRule Transformer++ script. If you override `NUM_LAYERS`, also override
+`LINEAR_ATTENTION_FREQ` to a same-length all-ones pattern.
+
 Each wrapper sets:
 
 ```bash
