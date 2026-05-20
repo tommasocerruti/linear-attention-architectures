@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Hybrid KDA ~350M baseline on 1 GH200 node (4 GPUs).
-# 20L / 1024H / 2816F / 16h / 4kv (GQA), with a 2:1 KDA:SDPA layer pattern.
+# 24L / 1024H / 2816F / 16h / 4kv (GQA), with a 2:1 KDA:SDPA layer pattern.
 # SwiGLU, RMSNorm, RoPE, NorMuon (adaptive_muon + normuon), WSD, bf16.
 # 1B tokens on FineWeb-Edu, ~1908 steps at 524K tokens/step.
 # --overlap-param-gather intentionally omitted.
@@ -55,7 +55,7 @@ mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACH
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)
 MASTER_PORT=25678
 
-NUM_LAYERS=${NUM_LAYERS:-20}
+NUM_LAYERS=${NUM_LAYERS:-24}
 HIDDEN=${HIDDEN:-1024}
 FFN_HIDDEN=${FFN_HIDDEN:-2816}
 NUM_HEADS=${NUM_HEADS:-16}
@@ -228,12 +228,36 @@ DATA_ARGS=(
     --num-workers 4
 )
 
-CHECKPOINT_ARGS=(
-    --save $WORKDIR/_research/results/checkpoints/$EXP_NAME
-    --save-interval ${SAVE_INTERVAL:-1000}
-    --ckpt-format torch
-)
-mkdir -p $WORKDIR/_research/results/checkpoints/$EXP_NAME
+SAVE_DIR=${SAVE_DIR:-$REPO_DIR/_research/results/checkpoints/$EXP_NAME}
+LOAD_DIR=${LOAD_DIR:-$SAVE_DIR}
+if [ -n "$TRAIN_ITERS" ] && [ "$TRAIN_ITERS" -lt 2000 ]; then
+    SAVE_INTERVAL=${SAVE_INTERVAL:-$TRAIN_ITERS}
+else
+    SAVE_INTERVAL=${SAVE_INTERVAL:-2000}
+fi
+CKPT_FORMAT=${CKPT_FORMAT:-}
+NO_SAVE_OPTIM=${NO_SAVE_OPTIM:-0}
+NO_SAVE_RNG=${NO_SAVE_RNG:-0}
+CHECKPOINT_ARGS=()
+if [ -n "$SAVE_DIR" ]; then
+    mkdir -p "$SAVE_DIR"
+    CHECKPOINT_ARGS=(
+        --save "$SAVE_DIR"
+        --save-interval "$SAVE_INTERVAL"
+    )
+    if [ -d "$LOAD_DIR" ] && [ -n "$(ls -A "$LOAD_DIR" 2>/dev/null)" ]; then
+        CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
+    fi
+fi
+if [ -n "$CKPT_FORMAT" ]; then
+    CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
+fi
+if [ "$NO_SAVE_OPTIM" = "1" ]; then
+    CHECKPOINT_ARGS+=(--no-save-optim)
+fi
+if [ "$NO_SAVE_RNG" = "1" ]; then
+    CHECKPOINT_ARGS+=(--no-save-rng)
+fi
 
 RECOMPUTE_ARGS=()
 if [ "${RECOMPUTE:-0}" = "1" ]; then
@@ -256,7 +280,7 @@ MEGATRON_ARGS="\
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
     ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
-    ${CHECKPOINT_ARGS[@]} \
+    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
