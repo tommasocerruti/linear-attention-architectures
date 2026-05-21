@@ -358,7 +358,7 @@ def get_transformer_block_with_experimental_attention_variant_spec(
 
 def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -> bool:
     """Check if the experimental attention variant is a linear attention variant."""
-    linear_attention_variants = ["gated_delta_net", "delta_net", "kda"]
+    linear_attention_variants = ["gated_delta_net", "delta_net", "kda", "gated_delta_net_pytorch"]
     return experimental_attention_variant in linear_attention_variants
 
 

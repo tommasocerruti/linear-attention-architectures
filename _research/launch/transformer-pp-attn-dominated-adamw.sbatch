@@ -1,19 +1,19 @@
 #!/bin/bash
 #
-# Transformer++ 350M baseline on 1 GH200 node (4 GPUs).
-# 24L / 1024H / 2560F / 16h / 4kv (GQA).
+# Transformer++ Attention-Dominated ~7M model on 1 GH200 (single GPU).
+# 6L / 256H / 256F (FFN=Hidden to crush MLP) / 4h / 1kv (GQA).
+# No network communication: CP=1, 1 GPU. Isolates O(N^2) attention scaling.
 # SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
-# 15B tokens on FineWeb-Edu, ~28610 steps at 524K tokens/step.
 #
-#SBATCH --job-name=transformer-pp-350m-adamw
+#SBATCH --job-name=transformer-pp-attn-dominated-adamw
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
-#SBATCH --time=10:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
-#SBATCH --ntasks-per-node=4
-#SBATCH --gpus-per-node=4
+#SBATCH --ntasks-per-node=1
+#SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=72
 #SBATCH --mem=460000
 #SBATCH --no-requeue
@@ -52,16 +52,17 @@ mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACH
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)
 MASTER_PORT=25678
 
-NUM_LAYERS=${NUM_LAYERS:-24}
-HIDDEN=${HIDDEN:-1024}
-FFN_HIDDEN=${FFN_HIDDEN:-2560}
-NUM_HEADS=${NUM_HEADS:-16}
-NUM_KV_HEADS=${NUM_KV_HEADS:-4}
+# Attention-dominated architecture: FFN_HIDDEN == HIDDEN to crush MLP compute.
+NUM_LAYERS=${NUM_LAYERS:-6}
+HIDDEN=${HIDDEN:-256}
+FFN_HIDDEN=${FFN_HIDDEN:-256}
+NUM_HEADS=${NUM_HEADS:-4}
+NUM_KV_HEADS=${NUM_KV_HEADS:-1}
 
-MBS=${MBS:-16}
-GBS=${GBS:-128}
+MBS=${MBS:-4}
+GBS=${GBS:-32}
 SEQ_LEN=${SEQ_LEN:-4096}
-TRAIN_SAMPLES=${TRAIN_SAMPLES:-244141}
+TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
 TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=3e-4
@@ -69,10 +70,10 @@ MIN_LR=${MIN_LR:-3e-5}
 
 TP=1
 PP=1
-CP=${CP:-1}
+CP=1
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-$(git rev-parse --short HEAD)}
+EXP_NAME=${EXP_NAME:-transformer-pp-attn-dominated-adamw-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
     TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
@@ -92,40 +93,9 @@ else
 fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
-SAVE_DIR=${SAVE_DIR:-$REPO_DIR/_research/results/checkpoints/$EXP_NAME}
-LOAD_DIR=${LOAD_DIR:-$SAVE_DIR}
-if [ -n "$TRAIN_ITERS" ] && [ "$TRAIN_ITERS" -lt 2000 ]; then
-    SAVE_INTERVAL=${SAVE_INTERVAL:-$TRAIN_ITERS}
-else
-    SAVE_INTERVAL=${SAVE_INTERVAL:-2000}
-fi
-CKPT_FORMAT=${CKPT_FORMAT:-}
-NO_SAVE_OPTIM=${NO_SAVE_OPTIM:-0}
-NO_SAVE_RNG=${NO_SAVE_RNG:-0}
-CHECKPOINT_ARGS=()
-if [ -n "$SAVE_DIR" ]; then
-    mkdir -p "$SAVE_DIR"
-    CHECKPOINT_ARGS=(
-        --save "$SAVE_DIR"
-        --save-interval "$SAVE_INTERVAL"
-    )
-    if [ -d "$LOAD_DIR" ] && [ -n "$(ls -A "$LOAD_DIR" 2>/dev/null)" ]; then
-        CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
-    fi
-fi
-if [ -n "$CKPT_FORMAT" ]; then
-    CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
-fi
-if [ "$NO_SAVE_OPTIM" = "1" ]; then
-    CHECKPOINT_ARGS+=(--no-save-optim)
-fi
-if [ "$NO_SAVE_RNG" = "1" ]; then
-    CHECKPOINT_ARGS+=(--no-save-rng)
-fi
-
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
 export APERTUS_FEATURE=transformer-pp
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-edu}
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-attn-dominated-fineweb-edu}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -224,24 +194,15 @@ DATA_ARGS=(
     --data-path $MEGATRON_DATA_PATH
     --data-cache-path $DATASET_CACHE_DIR
     --split 99,1,0
-    --num-workers 4
+    --num-workers ${NUM_WORKERS:-4}
 )
 
-CHECKPOINT_ARGS=(
-    --save $WORKDIR/_research/results/checkpoints/$EXP_NAME
-    --save-interval ${SAVE_INTERVAL:-1000}
-    --ckpt-format torch
+# Always recompute for fair comparison across seq lengths.
+RECOMPUTE_ARGS=(
+    --recompute-granularity full
+    --recompute-method uniform
+    --recompute-num-layers $NUM_LAYERS
 )
-mkdir -p $WORKDIR/_research/results/checkpoints/$EXP_NAME
-
-RECOMPUTE_ARGS=()
-if [ "${RECOMPUTE:-0}" = "1" ]; then
-    RECOMPUTE_ARGS=(
-        --recompute-granularity full
-        --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
-    )
-fi
 
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
@@ -252,8 +213,7 @@ MEGATRON_ARGS="\
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
-    ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
-    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
+    ${RECOMPUTE_ARGS[@]} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
@@ -261,7 +221,7 @@ MEGATRON_ARGS="\
 export WANDB_ARCH=softmax
 export WANDB_KERNEL=triton
 export WANDB_OPTIMIZER=adamw
-export WANDB_MODEL_SIZE=350M
+export WANDB_MODEL_SIZE=7M
 export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 

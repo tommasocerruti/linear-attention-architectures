@@ -2,10 +2,11 @@
 #
 # Transformer++ 350M baseline on 1 GH200 node (4 GPUs).
 # 24L / 1024H / 2560F / 16h / 4kv (GQA).
-# SwiGLU, RMSNorm, RoPE, AdamW, WSD schedule, bf16.
+# SwiGLU, RMSNorm, RoPE, NorMuon (adaptive_muon + normuon), WSD, bf16.
 # 15B tokens on FineWeb-Edu, ~28610 steps at 524K tokens/step.
+# --overlap-param-gather intentionally omitted (breaks Muon, see README).
 #
-#SBATCH --job-name=transformer-pp-350m-adamw
+#SBATCH --job-name=transformer-pp-350m-fineweb-muon
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
 #SBATCH --time=10:00:00
@@ -44,7 +45,6 @@ export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
 export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
 
 mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACHE_DIR $PACKAGE_DIR _research/results/runs _research/results/performance
@@ -58,21 +58,21 @@ FFN_HIDDEN=${FFN_HIDDEN:-2560}
 NUM_HEADS=${NUM_HEADS:-16}
 NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
-MBS=${MBS:-16}
-GBS=${GBS:-128}
-SEQ_LEN=${SEQ_LEN:-4096}
-TRAIN_SAMPLES=${TRAIN_SAMPLES:-244141}
+MBS=16
+GBS=128
+SEQ_LEN=4096
+TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
 TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
-LR=3e-4
-MIN_LR=${MIN_LR:-3e-5}
+LR=${LR:-3.6e-4}
+MIN_LR=${MIN_LR:-3.6e-5}
 
 TP=1
 PP=1
-CP=${CP:-1}
+CP=1
 
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
-EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-$(git rev-parse --short HEAD)}
+EXP_NAME=${EXP_NAME:-transformer-pp-350m-fineweb-muon-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
     TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
@@ -125,7 +125,7 @@ fi
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
 export APERTUS_FEATURE=transformer-pp
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-edu}
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-muon}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
 export APERTUS_LOG_TOP1_ACC=0
@@ -161,7 +161,7 @@ TRAINING_ARGS=(
     --log-interval 1
     --eval-interval $EVAL_INTERVAL
     --eval-iters $EVAL_ITERS
-    --optimizer adam
+    --optimizer adaptive_muon
     --dataloader-type single
     --manual-gc
     --manual-gc-interval 50
@@ -177,6 +177,15 @@ REGULARIZATION_ARGS=(
     --clip-grad 1.0
     --adam-beta1 0.9
     --adam-beta2 0.95
+)
+
+MUON_ARGS=(
+    --muon-scale-mode spectral
+    --muon-nesterov
+    --muon-momentum 0.95
+    --muon-scalar-lr 1.5e-3
+    --muon-scalar-weight-decay 0.0
+    --adaptive-muon-moment2-method normuon
 )
 
 LEARNING_RATE_ARGS=(
@@ -227,43 +236,20 @@ DATA_ARGS=(
     --num-workers 4
 )
 
-CHECKPOINT_ARGS=(
-    --save $WORKDIR/_research/results/checkpoints/$EXP_NAME
-    --save-interval ${SAVE_INTERVAL:-1000}
-    --ckpt-format torch
-)
-mkdir -p $WORKDIR/_research/results/checkpoints/$EXP_NAME
-
-RECOMPUTE_ARGS=()
-if [ "${RECOMPUTE:-0}" = "1" ]; then
-    RECOMPUTE_ARGS=(
-        --recompute-granularity full
-        --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
-    )
-fi
-
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
+    ${MUON_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
-    ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
     ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
-
-export WANDB_ARCH=softmax
-export WANDB_KERNEL=triton
-export WANDB_OPTIMIZER=adamw
-export WANDB_MODEL_SIZE=350M
-export WANDB_SEQ_LEN=$SEQ_LEN
-export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
