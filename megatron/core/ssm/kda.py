@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import math
-import os
-from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Optional, Union
 
@@ -102,7 +100,6 @@ class KimiDeltaAttention(MegatronModule):
         self.tp_size = self.pg_collection.tp.size()
 
         self.hidden_size = config.hidden_size
-        self.kda_use_flashkda = config.kda_use_flashkda
         self.kda_use_fla_wrapper = config.kda_use_fla_wrapper
         self.conv_kernel_dim = config.linear_conv_kernel_dim
         self.key_head_dim = config.linear_key_head_dim
@@ -326,8 +323,7 @@ class KimiDeltaAttention(MegatronModule):
 
         if self.kda_use_fla_wrapper:
             hidden_states = hidden_states.transpose(0, 1).contiguous()
-            with self._flashkda_dispatch():
-                output, _, _ = self.fla_layer(hidden_states, attention_mask=None)
+            output, _, _ = self.fla_layer(hidden_states, attention_mask=None)
             return output.transpose(0, 1).contiguous(), None
 
         if self.cp_size > 1:
@@ -395,26 +391,25 @@ class KimiDeltaAttention(MegatronModule):
             1, local_token_count, self.num_value_heads_local_tp, self.value_head_dim
         ).contiguous()
 
-        with self._flashkda_dispatch():
-            core_attn_out, _ = chunk_kda(
-                q=q,
-                k=k,
-                v=v,
-                g=gate_logits,
-                beta=beta,
-                A_log=self.A_log,
-                dt_bias=self.dt_bias,
-                initial_state=None,
-                output_final_state=False,
-                use_qk_l2norm_in_kernel=True,
-                use_gate_in_kernel=True,
-                use_beta_sigmoid_in_kernel=False,
-                cu_seqlens=None if cp_context is not None else cu_seqlens,
-                safe_gate=False,
-                lower_bound=None,
-                disable_recompute=False,
-                cp_context=cp_context,
-            )
+        core_attn_out, _ = chunk_kda(
+            q=q,
+            k=k,
+            v=v,
+            g=gate_logits,
+            beta=beta,
+            A_log=self.A_log,
+            dt_bias=self.dt_bias,
+            initial_state=None,
+            output_final_state=False,
+            use_qk_l2norm_in_kernel=True,
+            use_gate_in_kernel=True,
+            use_beta_sigmoid_in_kernel=False,
+            cu_seqlens=None if cp_context is not None else cu_seqlens,
+            safe_gate=False,
+            lower_bound=None,
+            disable_recompute=False,
+            cp_context=cp_context,
+        )
 
         norm_out = self.out_norm(core_attn_out, gate_branch)
         norm_out = norm_out.reshape(batch, seq_len_local, self.v_dim_local_tp)
@@ -568,19 +563,6 @@ class KimiDeltaAttention(MegatronModule):
             ).clamp_(min=1e-4)
             inv_dt = dt + torch.log(-torch.expm1(-dt))
             self.fla_layer.dt_bias.data.copy_(inv_dt)
-
-    @contextmanager
-    def _flashkda_dispatch(self):
-        env_name = "FLA_FLASH_KDA"
-        previous = os.environ.get(env_name)
-        os.environ[env_name] = "1" if self.kda_use_flashkda else "0"
-        try:
-            yield
-        finally:
-            if previous is None:
-                os.environ.pop(env_name, None)
-            else:
-                os.environ[env_name] = previous
 
     @staticmethod
     def _flatten_batch_time(tensor: Tensor) -> Tensor:

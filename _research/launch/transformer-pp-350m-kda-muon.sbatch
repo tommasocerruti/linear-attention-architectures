@@ -78,9 +78,6 @@ MUON_SCALAR_LR=$(python3 -c "print(f'{float(\"$MUON_LR\")*1.5e-3/3.6e-4:.2e}')")
 TP=${TP:-1}
 PP=1
 CP=${CP:-1}
-# Set KDA_USE_FLASHKDA=1 to let FLA try the FlashKDA backend. Default stays on Triton.
-KDA_USE_FLASHKDA=${KDA_USE_FLASHKDA:-0}
-
 PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
 EXP_NAME=${EXP_NAME:-transformer-pp-350m-kda-muon-$(git rev-parse --short HEAD)}
 
@@ -141,9 +138,6 @@ KDA_ARGS=(
     --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
     --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
 )
-if [ "$KDA_USE_FLASHKDA" = "1" ]; then
-    KDA_ARGS+=(--kda-use-flashkda)
-fi
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS

@@ -2076,7 +2076,6 @@ def _add_network_size_args(parser):
         "fp8_param",
         "fp4_param",
         # registered manually in _add_experimental_attention_variant_args
-        "kda_use_flashkda",
         "kda_use_fla_wrapper",
         # incompatible defaults in dataclass
         "gradient_accumulation_fusion",
@@ -3244,13 +3243,6 @@ def _add_experimental_attention_variant_args(parser):
                             'where 1 indicates an LA layer and 0 indicates a SDPA layer. '
                             'Examples: "([0]+[1]*23)": 1 SDPA layer followed by 23 LA layers, '
                             '"([1]*3+[0]*2)*2": Three LA layers followed by two SDPA layers, repeated twice.')
-    group.add_argument(
-        '--kda-use-flashkda',
-        action='store_true',
-        default=False,
-        help='Allow KDA to let flash-linear-attention dispatch chunk_kda to FlashKDA when the '
-             'installed backend and hardware support it. By default KDA forces the Triton path.',
-    )
     group.add_argument(
         '--kda-use-fla-wrapper',
         action='store_true',

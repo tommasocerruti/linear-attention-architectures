@@ -309,10 +309,6 @@ class TransformerConfig(ModelParallelConfig):
     linear_num_value_heads: Optional[int] = 32
     """Number of value heads for linear attention variants; for gated_delta_net this also sets the gate heads."""
 
-    kda_use_flashkda: bool = False
-    """Whether KDA should allow FLA to dispatch `chunk_kda` to the FlashKDA backend.
-    Defaults to False so KDA stays on FLA's Triton implementation unless explicitly enabled."""
-
     kda_use_fla_wrapper: bool = False
     """Whether KDA should use the full upstream FLA KimiDeltaAttention layer.
     Intended only for 1-GPU loss comparison against the Megatron-native KDA implementation."""

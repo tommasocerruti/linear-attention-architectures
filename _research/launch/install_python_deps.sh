@@ -41,8 +41,6 @@ $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'causal-conv1d~=1.5' \
     'fla-core==0.5.0' \
     'flash-linear-attention==0.5.0'
-# FlashKDA is intentionally not installed here by default. When present, KDA can opt into
-# it via --kda-use-flashkda and FLA will dispatch to it on supported hardware/configurations.
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.2.0'
 
