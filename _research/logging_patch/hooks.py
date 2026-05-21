@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 import os
 import time
+import json
+from pathlib import Path
 from typing import Any
 
 from . import phase_timer
@@ -34,6 +36,10 @@ _STATE: dict[str, Any] = {
     "act_accum": {},
     "top1_correct": 0.0,
     "top1_total": 0.0,
+    "cler_gamma_log_path": None,
+    "cler_gamma_log_announced": False,
+    "cler_residual_log_path": None,
+    "cler_residual_log_announced": False,
 }
 
 
@@ -125,6 +131,202 @@ def _per_layer_grad_norms(model: Any) -> dict[str, float]:
                 continue
             out[name] = float(p.grad.detach().float().norm().item())
     return out
+
+
+def _collect_cler_gamma_stats(model: Any) -> dict[str, Any]:
+    chunks = model if isinstance(model, list) else [model]
+    gammas: dict[str, float] = {}
+    for chunk in chunks:
+        for name, p in chunk.named_parameters():
+            if not name.endswith("cler_gamma"):
+                continue
+            values = p.detach().float().reshape(-1)
+            if values.numel() == 1:
+                gammas[name] = float(values.item())
+            else:
+                for index, value in enumerate(values.tolist()):
+                    gammas[f"{name}.{index}"] = float(value)
+
+    if not gammas:
+        return {}
+
+    values = list(gammas.values())
+    abs_values = [abs(value) for value in values]
+    return {
+        "count": len(values),
+        "mean": sum(values) / len(values),
+        "min": min(values),
+        "max": max(values),
+        "abs_mean": sum(abs_values) / len(abs_values),
+        "max_abs": max(abs_values),
+        "l2": math.sqrt(sum(value * value for value in values)),
+        "values": gammas,
+    }
+
+
+def _tensor_summary(tensor: Any) -> dict[str, Any]:
+    import torch
+
+    if not isinstance(tensor, torch.Tensor):
+        return {}
+
+    with torch.no_grad():
+        data = tensor.detach()
+        values = data.float().reshape(-1)
+        numel = int(values.numel())
+        if numel == 0:
+            return {
+                "shape": list(data.shape),
+                "dtype": str(data.dtype).replace("torch.", ""),
+                "numel": 0,
+            }
+
+        finite = torch.isfinite(values)
+        finite_count = int(finite.sum().item())
+        if finite_count == 0:
+            return {
+                "shape": list(data.shape),
+                "dtype": str(data.dtype).replace("torch.", ""),
+                "numel": numel,
+                "finite_ratio": 0.0,
+            }
+        if finite_count != numel:
+            values = values[finite]
+
+        abs_values = values.abs()
+        square_mean = values.square().mean()
+        return {
+            "shape": list(data.shape),
+            "dtype": str(data.dtype).replace("torch.", ""),
+            "numel": numel,
+            "finite_ratio": finite_count / numel,
+            "mean": float(values.mean().item()),
+            "std": float(values.std(unbiased=False).item()),
+            "abs_mean": float(abs_values.mean().item()),
+            "max_abs": float(abs_values.max().item()),
+            "rms": float(square_mean.sqrt().item()),
+            "l2": float(values.norm().item()),
+        }
+
+
+def _collect_cler_residual_stats(model: Any) -> dict[str, Any]:
+    chunks = model if isinstance(model, list) else [model]
+    layers: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, module in chunk.named_modules():
+            if not name.endswith(".self_attention"):
+                continue
+            residual = getattr(module, "cler_residual", None)
+            if residual is None:
+                continue
+            stats = _tensor_summary(residual)
+            if stats:
+                layers[f"{name}.cler_residual"] = stats
+
+    if not layers:
+        return {}
+
+    abs_means = [
+        float(stats["abs_mean"]) for stats in layers.values() if "abs_mean" in stats
+    ]
+    max_abs_values = [
+        float(stats["max_abs"]) for stats in layers.values() if "max_abs" in stats
+    ]
+    payload: dict[str, Any] = {
+        "count": len(layers),
+        "layers": layers,
+    }
+    if abs_means:
+        payload["abs_mean_mean"] = sum(abs_means) / len(abs_means)
+    if max_abs_values:
+        payload["max_abs"] = max(max_abs_values)
+    return payload
+
+
+def _append_cler_residual_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    if os.environ.get("CLER_RESIDUAL_LOG_ENABLED", "1") == "0":
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_RESIDUAL_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_residual_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_residual_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_residual.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_residual_log_path"] = path
+
+    if not _STATE.get("cler_residual_log_announced"):
+        print(f"[cler] residual stats log: {path}", flush=True)
+        _STATE["cler_residual_log_announced"] = True
+
+    payload = {
+        "step": int(iteration),
+        "wall": time.time(),
+        **stats,
+    }
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _append_cler_gamma_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_GAMMA_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_gamma_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_gamma_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_gamma.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_gamma_log_path"] = path
+
+    if not _STATE.get("cler_gamma_log_announced"):
+        print(f"[cler] gamma stats log: {path}", flush=True)
+        _STATE["cler_gamma_log_announced"] = True
+
+    payload = {
+        "step": int(iteration),
+        "wall": time.time(),
+        **stats,
+    }
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
 
 
 def _is_spike(loss: float) -> bool:
@@ -278,12 +480,14 @@ def patch_training_log() -> None:
         report_memory_flag, skipped_iter, grad_norm, params_norm,
         num_zeros_in_grad, max_attention_logit,
         pg_collection=None, is_first_iteration=False,
+        **kwargs,
     ):
         ret = original(
             loss_dict, total_loss_dict, learning_rate, iteration, loss_scale,
             report_memory_flag, skipped_iter, grad_norm, params_norm,
             num_zeros_in_grad, max_attention_logit,
             pg_collection=pg_collection, is_first_iteration=is_first_iteration,
+            **kwargs,
         )
 
         writer = _STATE["writer"]
@@ -342,6 +546,12 @@ def patch_training_log() -> None:
             row["params_norm"] = float(params_norm)
         if tokens_per_sec_per_gpu is not None:
             row["tput"] = float(tokens_per_sec_per_gpu)
+        cler_gamma_stats = _append_cler_gamma_log(int(iteration))
+        if cler_gamma_stats:
+            row["cler_gamma"] = cler_gamma_stats
+        cler_residual_stats = _append_cler_residual_log(int(iteration))
+        if cler_residual_stats:
+            row["cler_residual"] = cler_residual_stats
 
         if _STATE["log_per_layer_grads"] and _STATE["model"] is not None:
             row["per_layer_grad_norm"] = _per_layer_grad_norms(_STATE["model"])

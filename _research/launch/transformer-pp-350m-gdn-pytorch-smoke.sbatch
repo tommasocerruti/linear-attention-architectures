@@ -18,7 +18,10 @@
 
 set -euo pipefail
 
-REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+REPO_ROOT=${CLER_REPO_ROOT:-${SLURM_SUBMIT_DIR:-/iopsstor/scratch/cscs/$USER/cler}}
+if [ ! -f "$REPO_ROOT/pretrain_gpt.py" ]; then
+    REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+fi
 SCRIPT_DIR=$REPO_ROOT/_research/launch
 cd "$REPO_ROOT"
 
@@ -27,8 +30,8 @@ export EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-25}
 export EVAL_INTERVAL=${EVAL_INTERVAL:-25}
 export EVAL_ITERS=${EVAL_ITERS:-1}
 export SEQ_LEN=${SEQ_LEN:-4096}
-export MBS=${MBS:-16}
-export GBS=${GBS:-128}
+export MBS=${MBS:-2}
+export GBS=${GBS:-8}
 export RECOMPUTE=${RECOMPUTE:-0}
 export CP=${CP:-1}
 export WANDB_IS_SMOKE=1

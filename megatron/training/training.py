@@ -595,13 +595,21 @@ def num_floating_point_operations(args, batch_size):
                         * v_dim
                     )
                 )
-            elif args.experimental_attention_variant == "delta_net":
+            elif args.experimental_attention_variant in (
+                "delta_net",
+                "delta_net_pytorch",
+                "cler_delta_net_pytorch",
+                "linear_transformer_pytorch",
+            ):
                 # Calculate the FLOPs for the plain delta net attention.
                 qk_head_dim = args.linear_key_head_dim
                 v_head_dim = args.linear_value_head_dim
                 num_heads = args.linear_num_key_heads
                 qk_dim = qk_head_dim * num_heads
                 v_dim = v_head_dim * num_heads
+                core_rule_factor = (
+                    2 if args.experimental_attention_variant == "linear_transformer_pytorch" else 4
+                )
                 linear_self_attn_term = (
                     forward_backward_expansion_factor
                     * fma_expansion_factor
@@ -612,11 +620,11 @@ def num_floating_point_operations(args, batch_size):
                         ## conv1d
                         + args.linear_conv_kernel_dim
                         * (2 * qk_dim + v_dim)
-                        ## delta rule
+                        ## additive linear memory or delta rule
                         + num_heads
                         * qk_head_dim
                         * v_head_dim
-                        * 4
+                        * core_rule_factor
                         ## out proj
                         + args.hidden_size
                         * v_dim
@@ -3564,9 +3572,14 @@ def evaluate_and_print_results(
                         '{} validation{} ppl vs samples'.format(key, suffix), ppl, args.consumed_train_samples
                     )
                 if wandb_writer and is_last_rank():
-                    wandb_writer.log(
-                        {'{} validation{}'.format(key, suffix): total_loss_dict[key].item()}, iteration
-                    )
+                    validation_metrics = {
+                        '{} validation{}'.format(key, suffix): total_loss_dict[key].item()
+                    }
+                    if args.log_validation_ppl_to_tensorboard:
+                        validation_metrics[
+                            '{} validation{} ppl'.format(key, suffix)
+                        ] = ppl
+                    wandb_writer.log(validation_metrics, iteration)
 
         if process_non_loss_data_func is not None and writer and is_last_rank():
             process_non_loss_data_func(collected_non_loss_data, iteration, writer)

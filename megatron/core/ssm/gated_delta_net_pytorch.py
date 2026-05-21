@@ -6,6 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple, Union
 
@@ -47,6 +48,22 @@ def l2norm(x, dim=-1, eps=1e-6):
 HAVE_FLA = False
 
 logger = logging.getLogger(__name__)
+
+
+def _maybe_compile_linear_rule(fn):
+    if os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE", "0") != "1":
+        return fn
+    if not hasattr(torch, "compile"):
+        return fn
+    mode = os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE_MODE", "reduce-overhead")
+    if os.environ.get("MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS", "0") != "1":
+        return torch.compile(
+            fn,
+            fullgraph=False,
+            dynamic=False,
+            options={"triton.cudagraphs": False},
+        )
+    return torch.compile(fn, mode=mode, fullgraph=False, dynamic=False)
 
 
 @dataclass
@@ -199,9 +216,15 @@ class GatedDeltaNet(MegatronModule):
         setattr(self.A_log, "partition_dim", 0)
 
         if True:
-            self.gated_delta_rule = torch_chunk_gated_delta_rule
+            self.gated_delta_rule = _maybe_compile_linear_rule(torch_chunk_gated_delta_rule)
         else:
             self.gated_delta_rule = chunk_gated_delta_rule
+        self.supports_cler = True
+        self.cler_residual = None
+        if self.config.cler_enabled:
+            self.cler_gamma = self._make_cler_gamma_parameter()
+        else:
+            self.register_parameter("cler_gamma", None)
 
         # Output layernorm before projection
         self.out_norm = build_module(
@@ -226,6 +249,80 @@ class GatedDeltaNet(MegatronModule):
         )
 
         self.reset_parameters()
+
+    def _make_cler_gamma_parameter(self):
+        """Create the receiver-side CLER gate for this local attention shard."""
+        if self.config.cler_gamma_mode == "head":
+            if self.cp_size != 1:
+                raise NotImplementedError(
+                    "CLER per-head gamma is currently implemented for context parallel size 1."
+                )
+            gamma = torch.full(
+                (self.num_v_heads_local_tp,),
+                float(self.config.cler_gamma_init),
+                dtype=self.config.params_dtype,
+                device=torch.cuda.current_device(),
+            )
+            parameter = nn.Parameter(gamma)
+            setattr(parameter, "tensor_model_parallel", True)
+            setattr(parameter, "partition_dim", 0)
+            return parameter
+        if self.config.cler_gamma_mode == "channel":
+            if self.cp_size != 1:
+                raise NotImplementedError(
+                    "CLER per-channel gamma is currently implemented for context parallel size 1."
+                )
+            gamma = torch.full(
+                (self.num_v_heads_local_tp, self.value_head_dim),
+                float(self.config.cler_gamma_init),
+                dtype=self.config.params_dtype,
+                device=torch.cuda.current_device(),
+            )
+            parameter = nn.Parameter(gamma)
+            setattr(parameter, "tensor_model_parallel", True)
+            setattr(parameter, "partition_dim", 0)
+            return parameter
+
+        return nn.Parameter(
+            torch.tensor(
+                self.config.cler_gamma_init,
+                dtype=self.config.params_dtype,
+                device=torch.cuda.current_device(),
+            )
+        )
+
+    def _cler_gamma_for_value(self, value: Tensor) -> Tensor:
+        gamma = self.cler_gamma.to(dtype=value.dtype)
+        if gamma.ndim == 0:
+            return gamma
+        if gamma.ndim == 1:
+            if gamma.numel() != value.shape[2]:
+                raise ValueError(
+                    "CLER per-head gamma must match the local GDN value-head count, "
+                    f"got {gamma.numel()=} and value heads={value.shape[2]}."
+                )
+            return gamma.view(1, 1, -1, 1)
+        if gamma.ndim == 2:
+            if tuple(gamma.shape) != tuple(value.shape[2:4]):
+                raise ValueError(
+                    "CLER per-channel gamma must match the local GDN value shape per token, "
+                    f"got gamma shape={tuple(gamma.shape)} and value shape={tuple(value.shape[2:4])}."
+                )
+            return gamma.view(1, 1, gamma.shape[0], gamma.shape[1])
+        raise ValueError(
+            "CLER gamma must be scalar, per-head, or per-channel, "
+            f"got shape={tuple(gamma.shape)}."
+        )
+
+    def _maybe_normalize_cler_residual(self, cler_residual: Tensor) -> Tensor:
+        if not self.config.cler_normalize_residual:
+            return cler_residual
+        residual_fp32 = cler_residual.float()
+        scale = torch.rsqrt(
+            residual_fp32.square().mean(dim=-1, keepdim=True)
+            + self.config.cler_residual_norm_eps
+        )
+        return (residual_fp32 * scale).to(dtype=cler_residual.dtype)
 
     def reset_parameters(self):
         """Reset the parameters."""
@@ -279,6 +376,8 @@ class GatedDeltaNet(MegatronModule):
         # TODO: Deal with attention_mask
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
+        cler_residual = kwargs.pop("cler_residual", None)
+        self.cler_residual = None
 
         seq_len, batch, _ = hidden_states.shape
         seq_len = seq_len * self.sp_size * self.cp_size
@@ -391,6 +490,20 @@ class GatedDeltaNet(MegatronModule):
         )
         nvtx_range_pop(suffix="prepare_qkv_for_gated_delta_rule")
 
+        if self.config.cler_enabled:
+            if cler_residual is not None:
+                if self.config.cler_detach_residual:
+                    cler_residual = cler_residual.detach()
+                if cler_residual.shape != value.shape:
+                    raise ValueError(
+                        "CLER residual shape must match the current GDN value shape, "
+                        f"got {cler_residual.shape=} and {value.shape=}."
+                    )
+                cler_residual = self._maybe_normalize_cler_residual(cler_residual)
+                value = value + self._cler_gamma_for_value(value) * cler_residual
+            else:
+                value = value + self._cler_gamma_for_value(value) * value.new_zeros(())
+
         # Calculate g and beta
         nvtx_range_push(suffix="g_and_beta")
         A_log_local_cp = get_parameter_local_cp(self.A_log, dim=0, cp_group=self.pg_collection.cp)
@@ -401,16 +514,29 @@ class GatedDeltaNet(MegatronModule):
         nvtx_range_pop(suffix="g_and_beta")
 
         nvtx_range_push(suffix="gated_delta_rule")
-        core_attn_out, last_recurrent_state = self.gated_delta_rule(
-            query,
-            key,
-            value,
-            g=g,
-            beta=beta,
-            initial_state=None,
-            output_final_state=False,
-            use_qk_l2norm_in_kernel=False,
-        )
+        if self.config.cler_enabled:
+            core_attn_out, last_recurrent_state, self.cler_residual = self.gated_delta_rule(
+                query,
+                key,
+                value,
+                g=g,
+                beta=beta,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+                return_residual=True,
+            )
+        else:
+            core_attn_out, last_recurrent_state = self.gated_delta_rule(
+                query,
+                key,
+                value,
+                g=g,
+                beta=beta,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+            )
         nvtx_range_pop(suffix="gated_delta_rule")
 
         # RMSNorm
@@ -847,6 +973,7 @@ def torch_chunk_gated_delta_rule(
     initial_state=None,
     output_final_state=False,
     use_qk_l2norm_in_kernel=False,
+    return_residual=False,
 ):
     # pylint: disable=line-too-long
     '''
@@ -905,6 +1032,7 @@ def torch_chunk_gated_delta_rule(
         else initial_state.to(value)
     )
     core_attn_out = torch.zeros_like(value)
+    residual_out = torch.zeros_like(value) if return_residual else None
     mask = torch.triu(
         torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1
     )
@@ -915,6 +1043,8 @@ def torch_chunk_gated_delta_rule(
         attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
         v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
         v_new = v_i - v_prime
+        if return_residual:
+            residual_out[:, :, i] = v_new
         attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
         core_attn_out[:, :, i] = attn_inter + attn @ v_new
         last_recurrent_state = (
@@ -929,4 +1059,11 @@ def torch_chunk_gated_delta_rule(
     )
     core_attn_out = core_attn_out[:, :, :sequence_length]
     core_attn_out = core_attn_out.transpose(1, 2).contiguous().to(initial_dtype)
+    if return_residual:
+        residual_out = residual_out.reshape(
+            residual_out.shape[0], residual_out.shape[1], -1, residual_out.shape[-1]
+        )
+        residual_out = residual_out[:, :, :sequence_length]
+        residual_out = residual_out.transpose(1, 2).contiguous().to(initial_dtype)
+        return core_attn_out, last_recurrent_state, residual_out
     return core_attn_out, last_recurrent_state

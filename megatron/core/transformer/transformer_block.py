@@ -439,6 +439,15 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
     def _get_layer(self, layer_number: int):
         return self.layers[layer_number]
 
+    def _get_next_cler_residual(
+        self, layer, current_cler_residual: Optional[Tensor] = None
+    ) -> Optional[Tensor]:
+        if not self.config.cler_enabled:
+            return None
+        if getattr(layer, "supports_cler", False):
+            return getattr(layer, "cler_residual", None)
+        return current_cler_residual
+
     def _checkpointed_forward(
         self,
         hidden_states: Tensor,
@@ -480,6 +489,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 rotary_pos_emb,
                 padding_mask=None,
             ):
+                cler_residual = None
                 for index in range(start, end):
                     layer = self._get_layer(index)
 
@@ -510,7 +520,9 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             inference_context=None,
                             packed_seq_params=packed_seq_params,
                             padding_mask=padding_mask,
+                            cler_residual=cler_residual,
                         )
+                    cler_residual = self._get_next_cler_residual(layer, cler_residual)
                 return hidden_states, context
 
             return custom_forward
@@ -544,6 +556,15 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 )
 
         if self.config.recompute_method == 'uniform':
+            if (
+                self.config.cler_enabled
+                and self.config.recompute_num_layers < self.num_layers_per_pipeline_rank
+            ):
+                raise ValueError(
+                    "CLER with full activation recompute currently requires one recompute chunk "
+                    "covering the full local transformer stack. Set recompute_num_layers to at "
+                    "least the number of local layers or disable full recompute."
+                )
             # Uniformly divide the total number of Transformer layers and checkpoint
             # the input activation of each divided chunk.
             # A method to further reduce memory usage reducing checkpoints.
@@ -566,6 +587,11 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 layer_idx += self.config.recompute_num_layers
 
         elif self.config.recompute_method == 'block':
+            if self.config.cler_enabled:
+                raise ValueError(
+                    "CLER with full activation recompute currently supports only uniform "
+                    "recompute with one full local-stack chunk."
+                )
             # Checkpoint the input activation of only a set number of individual
             # Transformer layers and skip the rest.
             # A method fully use the device memory removing redundant re-computation.
@@ -802,6 +828,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                     # No intermediate_hidden_states requested: just hidden_states
                     hidden_states = checkpointed_result
             else:
+                cler_residual = None
                 for l_no, layer in enumerate(self.layers):
                     # Get appropriate inner quantization context
                     if use_inner_quantization_context:
@@ -833,7 +860,9 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             packed_seq_params=packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
                             padding_mask=padding_mask,
+                            cler_residual=cler_residual,
                         )
+                    cler_residual = self._get_next_cler_residual(layer, cler_residual)
 
                     if (
                         torch.is_grad_enabled()
