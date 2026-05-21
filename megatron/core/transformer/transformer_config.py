@@ -1113,13 +1113,15 @@ class TransformerConfig(ModelParallelConfig):
             )
 
         if self.cler_enabled and self.experimental_attention_variant not in {
+            "gated_delta_net",
             "gated_delta_net_pytorch",
+            "delta_net",
             "cler_delta_net_pytorch",
         }:
             raise ValueError(
                 "cler_enabled is currently only supported with "
-                "experimental_attention_variant='gated_delta_net_pytorch' or "
-                "'cler_delta_net_pytorch'."
+                "experimental_attention_variant='gated_delta_net', "
+                "'gated_delta_net_pytorch', 'delta_net', or 'cler_delta_net_pytorch'."
             )
 
         if self.cler_gamma_mode not in {"scalar", "head", "channel"}:

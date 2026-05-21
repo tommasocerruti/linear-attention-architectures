@@ -119,6 +119,18 @@ def test_cler_delta_accepts_head_gamma_and_residual_norm_config():
     assert config.cler_residual_norm_eps == 1e-5
 
 
+def test_cler_accepts_fast_delta_net_variant():
+    config = _make_linear_config(
+        experimental_attention_variant="delta_net",
+        cler_enabled=True,
+        cler_gamma_init=0.125,
+    )
+
+    assert config.cler_enabled
+    assert config.experimental_attention_variant == "delta_net"
+    assert config.cler_gamma_init == 0.125
+
+
 def test_cler_still_rejects_plain_delta_net_pytorch_variant():
     _assert_raises(
         ValueError,

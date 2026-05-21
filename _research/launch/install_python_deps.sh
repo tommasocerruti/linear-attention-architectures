@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 PKG_DIR=${1:?usage: install_python_deps.sh PKG_DIR}
-MARKER=$PKG_DIR/.deps_installed_v10
+MARKER=$PKG_DIR/.deps_installed_v13
 LOCK=$PKG_DIR/.install.lockdir
 
 mkdir -p "$PKG_DIR"
@@ -17,6 +17,7 @@ from fla.modules.l2norm import l2norm
 from fla.ops.kda import chunk_kda
 from fla.ops.delta_rule import chunk_delta_rule
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+import tilelang
 PY
 }
 
@@ -36,6 +37,9 @@ else
     INSTALL="pip install --quiet"
 fi
 
+# Install tilelang first (with deps — it needs tvm/tvm_ffi), then overwrite
+# any packages it clobbers (datasets, numpy) with our pinned versions after.
+$INSTALL --upgrade --target="$PKG_DIR" tilelang
 $INSTALL --upgrade --target="$PKG_DIR" transformers wandb datasets sentencepiece einops
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'causal-conv1d~=1.5' \
@@ -56,6 +60,7 @@ from fla.modules.l2norm import l2norm
 from fla.ops.kda import chunk_kda
 from fla.ops.delta_rule import chunk_delta_rule
 from fla.ops.gated_delta_rule import chunk_gated_delta_rule
+import tilelang
 PY
 fi
 

@@ -4,9 +4,11 @@
 # Select the architecture with LINEAR_VARIANT:
 #   gdn_pytorch  - PyTorch Gated DeltaNet baseline, CLER off
 #   cler         - CLER v1 on PyTorch Gated DeltaNet
+#   cler_gdn_triton - CLER v1 on Triton/FLA Gated DeltaNet
 #   deltanet     - DeltaNet baseline
 #   deltanet_pytorch - pure PyTorch DeltaNet baseline
 #   cler_deltanet_pytorch - CLER v1 on pure PyTorch DeltaNet
+#   cler_deltanet_triton - CLER v1 on Triton/FLA DeltaNet
 #   linear_transformer_pytorch - pure additive linear-transformer baseline
 #
 # Required environment:
@@ -55,7 +57,7 @@ if [ ! -f "$REPO_ROOT/pretrain_gpt.py" ]; then
 fi
 WORKDIR=$REPO_ROOT
 SCRATCH_REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-PACKAGE_DIR=$SCRATCH_REPO_DIR/_research/packages
+PACKAGE_DIR=${PACKAGE_DIR:-$SCRATCH_REPO_DIR/_research/packages}
 DATASET_CACHE_DIR=$SCRATCH_REPO_DIR/cache/dataset
 TMP_CACHE_DIR=$SCRATCH_REPO_DIR/cache/tmp
 
@@ -168,6 +170,36 @@ case "$LINEAR_VARIANT" in
         APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-v1-muon
         EXP_NAME_DEFAULT=transformer-pp-350m-cler-v1-muon-$GIT_SHA
         ;;
+    cler_gdn_triton)
+        export CLER_ENABLED=1
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        LINEAR_ARGS=(
+            --experimental-attention-variant gated_delta_net
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
+            --attention-output-gate
+        )
+        CLER_ARGS=(
+            --cler-enabled
+            --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+            --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
+        )
+        if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-detach-residual)
+        fi
+        if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-normalize-residual)
+        fi
+        WANDB_ARCH_DEFAULT=cler-v1-gdn-triton
+        APERTUS_FEATURE_DEFAULT=cler-v1-gdn-triton-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-gdn-triton-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-cler-gdn-triton-muon-$GIT_SHA
+        ;;
     deltanet)
         LINEAR_ARGS=(
             --experimental-attention-variant delta_net
@@ -226,6 +258,35 @@ case "$LINEAR_VARIANT" in
         APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon
         EXP_NAME_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon-$GIT_SHA
         ;;
+    cler_deltanet_triton)
+        export CLER_ENABLED=1
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        LINEAR_ARGS=(
+            --experimental-attention-variant delta_net
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-128}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-4}
+        )
+        CLER_ARGS=(
+            --cler-enabled
+            --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+            --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
+        )
+        if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-detach-residual)
+        fi
+        if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-normalize-residual)
+        fi
+        WANDB_ARCH_DEFAULT=cler-v1-deltanet-triton
+        APERTUS_FEATURE_DEFAULT=cler-v1-deltanet-triton-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-deltanet-triton-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-cler-deltanet-triton-muon-$GIT_SHA
+        ;;
     linear_transformer_pytorch)
         LINEAR_ARGS=(
             --experimental-attention-variant linear_transformer_pytorch
@@ -242,7 +303,7 @@ case "$LINEAR_VARIANT" in
         EXP_NAME_DEFAULT=transformer-pp-350m-linear-transformer-pytorch-muon-$GIT_SHA
         ;;
     *)
-        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, deltanet, deltanet_pytorch, cler_deltanet_pytorch, or linear_transformer_pytorch)" >&2
+        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, cler_gdn_triton, deltanet, deltanet_pytorch, cler_deltanet_pytorch, cler_deltanet_triton, or linear_transformer_pytorch)" >&2
         exit 1
         ;;
 esac

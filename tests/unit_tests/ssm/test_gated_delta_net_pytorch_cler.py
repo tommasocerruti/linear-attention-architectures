@@ -139,7 +139,7 @@ def test_cler_rejects_invalid_gamma_mode():
         ValueError,
         _make_linear_config,
         cler_enabled=True,
-        cler_gamma_mode="channel",
+        cler_gamma_mode="not_a_gamma_mode",
         contains="cler_gamma_mode",
     )
 
@@ -155,14 +155,16 @@ def test_cler_rejects_nonpositive_residual_norm_eps():
     )
 
 
-def test_cler_rejects_non_pytorch_gated_delta_net_variant():
-    _assert_raises(
-        ValueError,
-        _make_linear_config,
+def test_cler_accepts_fast_gated_delta_net_variant():
+    config = _make_linear_config(
         experimental_attention_variant="gated_delta_net",
         cler_enabled=True,
-        contains="gated_delta_net_pytorch",
+        cler_gamma_init=0.125,
     )
+
+    assert config.cler_enabled
+    assert config.experimental_attention_variant == "gated_delta_net"
+    assert config.cler_gamma_init == 0.125
 
 
 def test_cler_residual_carries_across_non_cler_layers():

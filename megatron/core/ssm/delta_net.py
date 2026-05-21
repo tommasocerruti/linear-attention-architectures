@@ -31,6 +31,11 @@ from megatron.core.ssm.gated_delta_net import (
     tensor_a2a_cp2hp,
     tensor_a2a_hp2cp,
 )
+from megatron.core.ssm.cler_utils import (
+    chunk_delta_rule_with_residual,
+    inject_cler_residual,
+    make_cler_gamma_parameter,
+)
 
 try:
     from fla.modules.convolution import causal_conv1d
@@ -144,7 +149,19 @@ class DeltaNet(MegatronModule):
             setattr(self.conv1d.bias, "tensor_model_parallel", True)
             setattr(self.conv1d.bias, "partition_dim", 0)
 
-        self.delta_rule = chunk_delta_rule
+        self.delta_rule = chunk_delta_rule_with_residual if config.cler_enabled else chunk_delta_rule
+        self.supports_cler = True
+        self.cler_residual = None
+        if self.config.cler_enabled:
+            self.cler_gamma = make_cler_gamma_parameter(
+                config=self.config,
+                num_value_heads_local_tp=self.num_heads_local_tp,
+                value_head_dim=self.value_head_dim,
+                cp_size=self.cp_size,
+                variant_name="DeltaNet",
+            )
+        else:
+            self.register_parameter("cler_gamma", None)
 
         self.out_norm = build_module(
             submodules.out_norm,
@@ -188,6 +205,9 @@ class DeltaNet(MegatronModule):
     ):
         # TODO: Deal with attention_mask
         inference_context = deprecate_inference_params(inference_context, inference_params)
+        cler_residual = kwargs.pop("cler_residual", None)
+        del kwargs
+        self.cler_residual = None
 
         seq_len, batch, _ = hidden_states.shape
         seq_len = seq_len * self.sp_size * self.cp_size
@@ -282,16 +302,37 @@ class DeltaNet(MegatronModule):
         query, key, value, beta = self._prepare_qkv_for_delta_rule(qkv, beta, batch, seq_len)
         nvtx_range_pop(suffix="prepare_qkv_for_delta_rule")
 
+        if self.config.cler_enabled:
+            value = inject_cler_residual(
+                value=value,
+                cler_residual=cler_residual,
+                cler_gamma=self.cler_gamma,
+                config=self.config,
+                variant_name="DeltaNet",
+            )
+
         nvtx_range_push(suffix="delta_rule")
-        core_attn_out, _ = self.delta_rule(
-            query,
-            key,
-            value,
-            beta=beta.sigmoid(),
-            initial_state=None,
-            output_final_state=False,
-            use_qk_l2norm_in_kernel=False,
-        )
+        if self.config.cler_enabled:
+            core_attn_out, _, self.cler_residual = self.delta_rule(
+                query,
+                key,
+                value,
+                beta=beta.sigmoid(),
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+                return_residual=True,
+            )
+        else:
+            core_attn_out, _ = self.delta_rule(
+                query,
+                key,
+                value,
+                beta=beta.sigmoid(),
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+            )
         nvtx_range_pop(suffix="delta_rule")
 
         nvtx_range_push(suffix="norm")
@@ -341,10 +382,13 @@ class DeltaNet(MegatronModule):
 
         sharded_state_dict = {}
         self._save_to_state_dict(sharded_state_dict, "", keep_vars=True)
+        tensor_parallel_layers_axis_map = {}
+        if self.config.cler_enabled and self.config.cler_gamma_mode in {"head", "channel"}:
+            tensor_parallel_layers_axis_map["cler_gamma"] = 0
         sharded_state_dict = make_sharded_tensors_for_checkpoint(
             sharded_state_dict,
             prefix,
-            tensor_parallel_layers_axis_map={},
+            tensor_parallel_layers_axis_map=tensor_parallel_layers_axis_map,
             sharded_offsets=sharded_offsets,
             tp_group=(tp_group if tp_group is not None else self.pg_collection.tp),
             dp_cp_group=metadata['dp_cp_group'],
