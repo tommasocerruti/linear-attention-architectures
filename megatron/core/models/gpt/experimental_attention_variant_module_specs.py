@@ -12,6 +12,12 @@ from megatron.core.ssm.cler_delta_net_pytorch import (
 from megatron.core.ssm.delta_net_pytorch import DeltaNet as DeltaNetPyTorch
 from megatron.core.ssm.delta_net_pytorch import DeltaNetSubmodules as DeltaNetPyTorchSubmodules
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNetSubmodules
+from megatron.core.ssm.gated_delta_net2_pytorch import (
+    GatedDeltaNet2 as GatedDeltaNet2PyTorch,
+)
+from megatron.core.ssm.gated_delta_net2_pytorch import (
+    GatedDeltaNet2Submodules as GatedDeltaNet2PyTorchSubmodules,
+)
 from megatron.core.ssm.gated_delta_net_pytorch import GatedDeltaNet as GatedDeltaNetPyTorch
 from megatron.core.ssm.linear_transformer_pytorch import (
     LinearTransformer as LinearTransformerPyTorch,
@@ -100,6 +106,27 @@ def get_gated_delta_net_pytorch_module_spec(
     attention = ModuleSpec(
         module=GatedDeltaNetPyTorch,
         submodules=GatedDeltaNetSubmodules(
+            in_proj=backend.column_parallel_layer_norm_linear(),
+            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": True},
+    )
+    return attention
+
+
+def get_gated_delta_net2_pytorch_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for pure PyTorch GatedDeltaNet-2 attention."""
+
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
+    rms_norm = config.normalization == "RMSNorm"
+    attention = ModuleSpec(
+        module=GatedDeltaNet2PyTorch,
+        submodules=GatedDeltaNet2PyTorchSubmodules(
             in_proj=backend.column_parallel_layer_norm_linear(),
             out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
             out_proj=backend.row_parallel_linear(),
@@ -258,6 +285,8 @@ def get_experimental_attention_variant_module_spec(
 
     if config.experimental_attention_variant == "gated_delta_net_pytorch":
         return get_gated_delta_net_pytorch_module_spec(config=config, backend=backend)
+    elif config.experimental_attention_variant == "gated_delta_net2_pytorch":
+        return get_gated_delta_net2_pytorch_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "gated_delta_net":
         return get_gated_delta_net_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net":
@@ -418,6 +447,7 @@ def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -
     """Check if the experimental attention variant is a linear attention variant."""
     linear_attention_variants = [
         "gated_delta_net_pytorch",
+        "gated_delta_net2_pytorch",
         "gated_delta_net",
         "delta_net",
         "delta_net_pytorch",
