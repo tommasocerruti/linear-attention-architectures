@@ -18,6 +18,7 @@ from megatron.core.utils import log_single_rank, to_local_if_dtensor
 from .dict_utils import nested_values
 from .mapping import (
     LocalNonpersistentObject,
+    ShardedObject,
     ShardedStateDict,
     ShardedTensor,
     ShardedTensorFactory,
@@ -97,10 +98,22 @@ def make_sharded_optimizer_tensor(
     if isinstance(model_param, ShardedTensorFactory):
         return replace(model_param, key=f'{prefix}.{model_param.key}', data=optim_param)
 
-    assert tuple(optim_param.shape) == model_param.local_shape, (
-        f'Optimizer shape ({tuple(optim_param.shape)} does not match model shape '
-        f'({model_param.local_shape})'
-    )
+    if tuple(optim_param.shape) != model_param.local_shape:
+        # Optimizer state has a different shape than the model param (e.g. NorMuon's
+        # moment2_buffer is reduced along one dimension). Fall back to a ShardedObject
+        # so each rank independently saves/restores its own copy.
+        key = f'{prefix}.{model_param.key}'
+        replica_id = (
+            model_param.replica_id if hasattr(model_param, 'replica_id') else 0
+        )
+        return ShardedObject(
+            key=key,
+            data=optim_param,
+            global_shape=(1,),
+            global_offset=(0,),
+            replica_id=replica_id,
+        )
+
     sh_ten = replace(
         model_param, key=f'{prefix}.{model_param.key}', data=optim_param, dtype=optim_param.dtype
     )
