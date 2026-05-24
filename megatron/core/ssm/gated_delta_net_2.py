@@ -33,7 +33,6 @@ from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.utils import (
-    cat_with_oom_fallback,
     ensure_metadata_has_dp_cp_group,
     make_sharded_tensors_for_checkpoint,
     sharded_state_dict_default,
@@ -52,22 +51,22 @@ except ImportError:
     HAVE_FLA = False
 
 try:
-    from fla.ops.gdn2.chunk_gdn2 import chunk_gdn2
+    from gdn2_ops.chunk_gdn2 import chunk_gdn2
 
     HAVE_GDN2_KERNEL = True
 except ImportError:
     try:
-        from fla.ops.gdn2 import chunk_gdn2
+        from lit_gpt.gdn2_ops.chunk_gdn2 import chunk_gdn2
 
         HAVE_GDN2_KERNEL = True
     except ImportError:
         try:
-            from gdn2_ops.chunk_gdn2 import chunk_gdn2
+            from fla.ops.gdn2.chunk_gdn2 import chunk_gdn2
 
             HAVE_GDN2_KERNEL = True
         except ImportError:
             try:
-                from lit_gpt.gdn2_ops.chunk_gdn2 import chunk_gdn2
+                from fla.ops.gdn2 import chunk_gdn2
 
                 HAVE_GDN2_KERNEL = True
             except ImportError:
@@ -197,7 +196,6 @@ class GatedDeltaNet2(MegatronModule):
             is_expert=False,
             tp_comm_buffer_name="fc1",
             tp_group=self.pg_collection.tp,
-            name=(name + ".in_proj") if name is not None else None,
         )
 
         # Conv1d for QKV
@@ -268,7 +266,6 @@ class GatedDeltaNet2(MegatronModule):
             is_expert=False,
             tp_comm_buffer_name="fc2",
             tp_group=self.pg_collection.tp,
-            name=(name + ".out_proj") if name is not None else None,
         )
 
         self.reset_parameters()
@@ -820,11 +817,15 @@ def _split_tensor_factory(
         )
         return chunk_sh_tens
 
+    @torch.no_grad()
+    def sh_ten_merge_fn(sub_state_dict):
+        return torch.cat(sub_state_dict)
+
     return ShardedTensorFactory(
         orig_sh_ten.key,
         orig_sh_ten.data,
         sh_ten_build_fn,
-        cat_with_oom_fallback,
+        sh_ten_merge_fn,
         orig_sh_ten.replica_id,
     )
 

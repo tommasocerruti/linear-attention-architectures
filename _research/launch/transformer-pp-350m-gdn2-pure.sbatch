@@ -1,12 +1,15 @@
 #!/bin/bash
 #
-# Short Gated DeltaNet2 runtime smoke for the FineWeb-Edu/LLaMA-2 path.
-# Reuses the full 350M GDN2 launcher with a small stopping condition.
+# Pure Gated DeltaNet2 ~350M baseline on 1 GH200 node (4 GPUs).
+# Reuses the GDN2 launcher but forces every transformer layer to use GDN2.
 #
-#SBATCH --job-name=transformer-pp-350m-gdn2-smoke
+# Requires MEGATRON_DATA_PATH to point at a FineWeb-Edu Megatron prefix and
+# LLAMA2_TOKENIZER_MODEL to point at a local LLaMA-2 tokenizer.model.
+#
+#SBATCH --job-name=transformer-pp-350m-gdn2-pure
 #SBATCH --account=lsaie-ss26
-#SBATCH --partition=debug
-#SBATCH --time=00:45:00
+#SBATCH --partition=normal
+#SBATCH --time=10:00:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
@@ -26,18 +29,12 @@ if [ ! -f "$CODE_DIR/pretrain_gpt.py" ] || [ ! -d "$CODE_DIR/megatron" ]; then
 fi
 cd "$CODE_DIR"
 
-export TRAIN_ITERS=${TRAIN_ITERS:-50}
-export EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-25}
-export EVAL_INTERVAL=${EVAL_INTERVAL:-25}
-export EVAL_ITERS=${EVAL_ITERS:-1}
-export SEQ_LEN=${SEQ_LEN:-4096}
-export MBS=${MBS:-16}
-export GBS=${GBS:-128}
-export RECOMPUTE=${RECOMPUTE:-0}
-export CP=${CP:-1}
-export WANDB_IS_SMOKE=1
+RUN_ID=transformer-pp-350m-gdn2-pure
 GIT_SHA=$(git -C "$CODE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
-export EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn2-smoke-$GIT_SHA}
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn2-smoke}
+
+export NUM_LAYERS=${NUM_LAYERS:-20}
+export LINEAR_ATTENTION_FREQ=${LINEAR_ATTENTION_FREQ:-"[1]*$NUM_LAYERS"}
+export EXP_NAME=${EXP_NAME:-$RUN_ID-$GIT_SHA}
+export APERTUS_TRACK=${APERTUS_TRACK:-$RUN_ID}
 
 exec bash "$SCRIPT_DIR/transformer-pp-350m-gdn2.sbatch"

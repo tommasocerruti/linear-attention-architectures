@@ -28,17 +28,27 @@ if [ ! -f "$LLAMA2_TOKENIZER_MODEL" ]; then
     echo "ERROR: tokenizer model not found: $LLAMA2_TOKENIZER_MODEL" >&2
     exit 1
 fi
+if [ ! -f "${MEGATRON_DATA_PATH}.bin" ] || [ ! -f "${MEGATRON_DATA_PATH}.idx" ]; then
+    echo "ERROR: FineWeb-Edu Megatron dataset prefix not found or incomplete: $MEGATRON_DATA_PATH" >&2
+    echo "Expected files: ${MEGATRON_DATA_PATH}.bin and ${MEGATRON_DATA_PATH}.idx" >&2
+    exit 1
+fi
 echo "START TIME: $(date)"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
 REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
+CODE_DIR=${CODE_DIR:-/users/$USER/cler}
+WORKDIR=$CODE_DIR
+if [ ! -f "$CODE_DIR/pretrain_gpt.py" ] || [ ! -d "$CODE_DIR/megatron" ]; then
+    echo "ERROR: CLER code checkout not found at $CODE_DIR" >&2
+    exit 1
+fi
 cd $WORKDIR
 
-PACKAGE_DIR=$REPO_DIR/_research/packages
+PACKAGE_DIR=${PACKAGE_DIR:-$REPO_DIR/_research/packages-gdn2}
 DATASET_CACHE_DIR=$REPO_DIR/cache/dataset
 TMP_CACHE_DIR=$REPO_DIR/cache/tmp
-GDN2_REPO_DIR=${GDN2_REPO_DIR:-/iopsstor/scratch/cscs/$USER/GatedDeltaNet-2}
+GDN2_REPO_DIR=${GDN2_REPO_DIR:-/users/$USER/GatedDeltaNet-2}
 
 if [ ! -f "$GDN2_REPO_DIR/lit_gpt/gdn2_ops/chunk_gdn2.py" ]; then
     echo "ERROR: GDN2 kernel checkout not found at $GDN2_REPO_DIR" >&2
@@ -57,7 +67,7 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
 
-mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACHE_DIR $PACKAGE_DIR _research/results/runs _research/results/performance
+mkdir -p $DATASET_CACHE_DIR $TRITON_CACHE_DIR $TORCHINDUCTOR_CACHE_DIR $TMP_CACHE_DIR $PACKAGE_DIR $REPO_DIR/_research/results/runs $REPO_DIR/_research/results/performance
 
 MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n1)
 MASTER_PORT=25678
@@ -76,6 +86,7 @@ TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=${LR:-3e-4}
 MIN_LR=${MIN_LR:-3e-5}
+OPTIMIZER=${OPTIMIZER:-adam}
 
 TP=1
 PP=1
@@ -96,13 +107,13 @@ else
     TRAIN_STOP_ARGS=(--train-samples $TRAIN_SAMPLES)
     EVAL_INTERVAL=${EVAL_INTERVAL:-$TRAIN_SAMPLES}
     LR_DURATION_ARGS=(
-        --lr-warmup-samples 25600
-        --lr-wsd-decay-samples 732422
+        --lr-warmup-samples ${LR_WARMUP_SAMPLES:-25600}
+        --lr-wsd-decay-samples ${LR_WSD_DECAY_SAMPLES:-732422}
     )
 fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
-export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
+export APERTUS_LOG_DIR=$REPO_DIR/_research/results/performance
 export APERTUS_FEATURE=gated-deltanet2
 export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn2}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
@@ -151,7 +162,7 @@ TRAINING_ARGS=(
     --log-interval 1
     --eval-interval $EVAL_INTERVAL
     --eval-iters $EVAL_ITERS
-    --optimizer adam
+    --optimizer $OPTIMIZER
     --dataloader-type single
     --manual-gc
     --manual-gc-interval 50
@@ -168,6 +179,21 @@ REGULARIZATION_ARGS=(
     --adam-beta1 0.9
     --adam-beta2 0.95
 )
+
+MUON_ARGS=()
+if [ "$OPTIMIZER" = "muon" ] || [ "$OPTIMIZER" = "adaptive_muon" ]; then
+    MUON_ARGS=(
+        --muon-scale-mode ${MUON_SCALE_MODE:-spectral}
+        --muon-nesterov
+        --muon-momentum ${MUON_MOMENTUM:-0.95}
+        --muon-scalar-lr ${MUON_SCALAR_LR:-1.5e-3}
+        --muon-scalar-weight-decay ${MUON_SCALAR_WEIGHT_DECAY:-0.0}
+        --adaptive-muon-moment2-method ${ADAPTIVE_MUON_MOMENT2_METHOD:-normuon}
+    )
+    if [ "${MUON_NO_SPLIT_QKV:-1}" = "1" ]; then
+        MUON_ARGS+=(--muon-no-split-qkv)
+    fi
+fi
 
 LEARNING_RATE_ARGS=(
     --lr $LR
@@ -200,7 +226,7 @@ LOGGING_ARGS=(
     --log-progress
     --log-memory-to-tensorboard
     --log-params-norm
-    --tensorboard-dir $WORKDIR/_research/results/runs/tb-$SLURM_JOB_ID
+    --tensorboard-dir $REPO_DIR/_research/results/runs/tb-$SLURM_JOB_ID
     --tensorboard-log-interval 1
     --log-timers-to-tensorboard
 )
@@ -226,32 +252,67 @@ if [ "${RECOMPUTE:-0}" = "1" ]; then
     )
 fi
 
+CHECKPOINT_ARGS=()
+if [ "${ENABLE_CHECKPOINT:-0}" = "1" ] || [ -n "${SAVE_DIR:-}" ]; then
+    SAVE_DIR=${SAVE_DIR:-$REPO_DIR/_research/results/checkpoints/$EXP_NAME}
+    LOAD_DIR=${LOAD_DIR:-$SAVE_DIR}
+    SAVE_INTERVAL=${SAVE_INTERVAL:-2000}
+    CKPT_FORMAT=${CKPT_FORMAT:-}
+    NO_SAVE_OPTIM=${NO_SAVE_OPTIM:-0}
+    NO_SAVE_RNG=${NO_SAVE_RNG:-0}
+    mkdir -p "$SAVE_DIR"
+    CHECKPOINT_ARGS=(
+        --save "$SAVE_DIR"
+        --save-interval "$SAVE_INTERVAL"
+    )
+    if [ -d "$LOAD_DIR" ] && [ -n "$(ls -A "$LOAD_DIR" 2>/dev/null)" ]; then
+        CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
+    fi
+    if [ -n "$CKPT_FORMAT" ]; then
+        CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
+    fi
+    if [ "$NO_SAVE_OPTIM" = "1" ]; then
+        CHECKPOINT_ARGS+=(--no-save-optim)
+    fi
+    if [ "$NO_SAVE_RNG" = "1" ]; then
+        CHECKPOINT_ARGS+=(--no-save-rng)
+    fi
+fi
+
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${GDN2_ARGS[@]} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
+    ${MUON_ARGS[@]+"${MUON_ARGS[@]}"} \
     ${LEARNING_RATE_ARGS[@]} \
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
     ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
+    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
 
 export WANDB_ARCH=gdn2
 export WANDB_KERNEL=triton-gdn2
-export WANDB_OPTIMIZER=adamw
-export WANDB_MODEL_SIZE=350M
+if [ "$OPTIMIZER" = "adam" ]; then
+    export WANDB_OPTIMIZER=${WANDB_OPTIMIZER:-adamw}
+elif [ "$OPTIMIZER" = "muon" ] || [ "$OPTIMIZER" = "adaptive_muon" ]; then
+    export WANDB_OPTIMIZER=${WANDB_OPTIMIZER:-muon}
+else
+    export WANDB_OPTIMIZER=${WANDB_OPTIMIZER:-$OPTIMIZER}
+fi
+export WANDB_MODEL_SIZE=${WANDB_MODEL_SIZE:-350M}
 export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
-    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
+    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $REPO_DIR/_research/results/runs"
 else
     export WANDB_MODE=disabled
 fi

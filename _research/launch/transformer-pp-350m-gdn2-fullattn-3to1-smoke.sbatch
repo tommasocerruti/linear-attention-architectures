@@ -1,9 +1,8 @@
 #!/bin/bash
 #
-# Short Gated DeltaNet2 runtime smoke for the FineWeb-Edu/LLaMA-2 path.
-# Reuses the full 350M GDN2 launcher with a small stopping condition.
+# Short 3:1 GDN2/full-attention runtime smoke for the FineWeb-Edu/LLaMA-2 path.
 #
-#SBATCH --job-name=transformer-pp-350m-gdn2-smoke
+#SBATCH --job-name=transformer-pp-350m-gdn2-fullattn-3to1-smoke
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=debug
 #SBATCH --time=00:45:00
@@ -36,8 +35,9 @@ export GBS=${GBS:-128}
 export RECOMPUTE=${RECOMPUTE:-0}
 export CP=${CP:-1}
 export WANDB_IS_SMOKE=1
+export LINEAR_ATTENTION_FREQ=${LINEAR_ATTENTION_FREQ:-4}
 GIT_SHA=$(git -C "$CODE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
-export EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn2-smoke-$GIT_SHA}
-export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn2-smoke}
+export EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn2-fullattn-3to1-smoke-$GIT_SHA}
+export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn2-fullattn-3to1-smoke}
 
-exec bash "$SCRIPT_DIR/transformer-pp-350m-gdn2.sbatch"
+exec bash "$SCRIPT_DIR/transformer-pp-350m-gdn2-fullattn-3to1.sbatch"
