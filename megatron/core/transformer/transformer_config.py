@@ -262,8 +262,11 @@ class TransformerConfig(ModelParallelConfig):
     ####################
     # attention variant
     ####################
-    experimental_attention_variant: Optional[Literal['gated_delta_net_pytorch', 'gated_delta_net', 'delta_net', 'dsa']] = None
-    """Type of attention variant to use. Currently support gated_delta_net_pytorch, gated_delta_net, delta_net and dsa."""
+    experimental_attention_variant: Optional[
+        Literal['gated_delta_net_pytorch', 'gated_delta_net', 'gated_delta_net_2', 'delta_net', 'dsa']
+    ] = None
+    """Type of attention variant to use. Currently support gated_delta_net_pytorch,
+    gated_delta_net, gated_delta_net_2, delta_net and dsa."""
 
     ####################
     # DSA
@@ -1064,7 +1067,7 @@ class TransformerConfig(ModelParallelConfig):
                 f"tensor_model_parallel_size ({self.tensor_model_parallel_size})."
             )
 
-        if self.experimental_attention_variant in {"gated_delta_net", "delta_net"}:
+        if self.experimental_attention_variant in {"gated_delta_net", "gated_delta_net_2", "delta_net"}:
             assert (
                 self.linear_attention_freq is not None
             ), (
@@ -1088,7 +1091,7 @@ class TransformerConfig(ModelParallelConfig):
             assert (
                 self.linear_num_value_heads is not None
             ), "linear_num_value_heads must be set for linear attention variants."
-            if self.experimental_attention_variant == "gated_delta_net":
+            if self.experimental_attention_variant in {"gated_delta_net", "gated_delta_net_2"}:
                 assert self.linear_num_value_heads % self.linear_num_key_heads == 0, (
                     f"linear_num_value_heads ({self.linear_num_value_heads}) must be a multiple of "
                     f"linear_num_key_heads ({self.linear_num_key_heads})."

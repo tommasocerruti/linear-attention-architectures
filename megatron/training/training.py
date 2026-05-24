@@ -595,6 +595,34 @@ def num_floating_point_operations(args, batch_size):
                         * v_dim
                     )
                 )
+            elif args.experimental_attention_variant == "gated_delta_net_2":
+                # Approximate FLOPs for GDN2. This keeps throughput logging enabled while using
+                # the GDN2 projection layout: q, k, v, output gate, erase, write, alpha.
+                qk_head_dim = args.linear_key_head_dim
+                v_head_dim = args.linear_value_head_dim
+                num_qk_heads = args.linear_num_key_heads
+                num_v_heads = args.linear_num_value_heads
+                qk_dim = qk_head_dim * num_qk_heads
+                v_dim = v_head_dim * num_v_heads
+                linear_self_attn_term = (
+                    forward_backward_expansion_factor
+                    * fma_expansion_factor
+                    * (
+                        ## in proj
+                        args.hidden_size
+                        * (4 * qk_dim + 3 * v_dim)
+                        ## conv1d
+                        + args.linear_conv_kernel_dim
+                        * (2 * qk_dim + v_dim)
+                        ## gated delta rule 2
+                        + num_v_heads
+                        * (v_head_dim ** 2)
+                        * 4
+                        ## out proj
+                        + args.hidden_size
+                        * v_dim
+                    )
+                )
             elif args.experimental_attention_variant == "delta_net":
                 # Calculate the FLOPs for the plain delta net attention.
                 qk_head_dim = args.linear_key_head_dim
