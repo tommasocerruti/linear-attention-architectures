@@ -294,6 +294,9 @@ class TransformerConfig(ModelParallelConfig):
     cler_detach_residual: bool = False
     """Detach the routed CLER residual before injecting it into the next layer."""
 
+    cler_injection_site: Literal['value', 'output', 'both'] = 'value'
+    """Where to inject the routed CLER residual: into the value target, output readout, or both."""
+
     ####################
     # DSA
     ####################
@@ -1113,6 +1116,12 @@ class TransformerConfig(ModelParallelConfig):
             raise ValueError(
                 "cler_residual_norm_eps must be positive, "
                 f"got {self.cler_residual_norm_eps}."
+            )
+
+        if self.cler_injection_site not in {"value", "output", "both"}:
+            raise ValueError(
+                "cler_injection_site must be one of 'value', 'output', or 'both', "
+                f"got {self.cler_injection_site!r}."
             )
 
         if self.experimental_attention_variant in {
