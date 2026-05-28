@@ -33,6 +33,16 @@ class FakeTokenizer:
         return " ".join(f"<{token_id}>" for token_id in token_ids)
 
 
+class PieceBackedSpecialTokenizer(FakeTokenizer):
+    def detokenize(self, token_ids, skip_special_tokens=True):
+        token_ids = [token_id for token_id in token_ids if token_id not in {0, 1, 2}]
+        return " ".join(f"<{token_id}>" for token_id in token_ids)
+
+    def ids_to_tokens(self, token_ids):
+        mapping = {0: "<pad>", 1: "<s>", 2: "</s>"}
+        return [mapping[token_id] for token_id in token_ids]
+
+
 class TestTokenizerApi(unittest.TestCase):
     def test_tokenizer_info_preserves_special_tokens(self):
         info = get_tokenizer_info(FakeTokenizer())
@@ -48,6 +58,13 @@ class TestTokenizerApi(unittest.TestCase):
             },
         )
 
+    def test_tokenizer_info_uses_special_pieces_when_detokenization_is_empty(self):
+        info = get_tokenizer_info(PieceBackedSpecialTokenizer())
+
+        self.assertEqual(info["bos_token"], "<s>")
+        self.assertEqual(info["eos_token"], "</s>")
+        self.assertEqual(info["pad_token"], "<pad>")
+
     def test_tokenize_for_api_adds_at_most_one_bos(self):
         tokenizer = FakeTokenizer()
 
@@ -62,6 +79,9 @@ class TestTokenizerApi(unittest.TestCase):
 
         with self.assertRaisesRegex(TypeError, "tokens must be a list of integers"):
             detokenize_for_api(FakeTokenizer(), ["1"])
+
+    def test_detokenize_for_api_uses_special_pieces_when_special_detok_is_empty(self):
+        self.assertEqual(detokenize_for_api(PieceBackedSpecialTokenizer(), [1, 5, 2]), "<s><5></s>")
 
 
 if __name__ == "__main__":

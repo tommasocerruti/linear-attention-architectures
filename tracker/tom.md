@@ -365,3 +365,191 @@ WinoGrande, and DeltaNet is slightly lower across the three tasks. The gaps are
 small, so I would not claim a decisive quality difference from this eval alone.
 The main result is that the native-Megatron `lm_eval` path now works end to end
 for all three implementations.
+
+Update: a later log audit found that the GDN and DeltaNet eval servers were
+starting with `experimental_attention_variant=None` and
+`linear_attention_freq=None`. That means the non-Transformer++ rows above should
+be treated as superseded until rerun with the experimental-attention checkpoint
+args restored correctly. The Transformer++ row is not affected by this issue.
+
+## Week 5
+
+Evaluated larger native Megatron DeltaNet Muon checkpoints from Tim's
+checkpoint folder with the same native `lm_eval` path as before: static local
+text-generation server, local transformer implementation, unfused attention, no
+persistent layer norm, and remote tokenizer endpoints. No HF conversion was
+used.
+
+The useful 1.3B result is now the fixed checkpoint root
+`transformer-pp-1.3b-deltanet-muon-33f00b09a-2368145`, whose latest checkpoint
+is iteration `19073`. Tim's progress log shows the run had reached about
+`39.64B` tokens at iteration `18900`, so this is a proper late checkpoint rather
+than the earlier smoke checkpoint. For 3B, I only found the early checkpoint at
+iteration `50`; the later/final 3B checkpoint was not available in the readable
+checkpoint folders when I checked.
+
+| Model | Checkpoint iter | HellaSwag acc_norm | PIQA acc_norm | WinoGrande acc |
+| --- | ---: | ---: | ---: | ---: |
+| DeltaNet 1.3B Muon | 19073 | 0.2541 | 0.4989 | 0.5264 |
+| DeltaNet 3B Muon | 50 | 0.2612 | 0.5027 | 0.5091 |
+
+Short read: the final-ish 1.3B checkpoint loads and runs correctly through the
+native-Megatron `lm_eval` harness. Compared with the earlier iteration-50
+sanity check, the clearest movement is WinoGrande, which rises to `0.5264`.
+HellaSwag and PIQA are still close to chance, so I would not over-interpret
+these downstream numbers yet. The 3B row is kept only as an early-checkpoint
+reference until a real later 3B checkpoint is available.
+
+Update: these DeltaNet rows are also superseded. Their server logs show
+`experimental_attention_variant=None`, so the eval server was not actually
+building the DeltaNet attention stack from the checkpoint. They need to be rerun
+after the native checkpoint-arg loading fix.
+
+### FineWeb-Edu perplexity eval
+
+The downstream multiple-choice tasks are noisy for these checkpoints, so I also
+added a closer-to-training-distribution `lm_eval` path for FineWeb-Edu
+perplexity. This uses Tim's corrected 15B-token FineWeb-Edu JSONL:
+
+```bash
+/iopsstor/scratch/cscs/tr1eder/cler/_research/results/data/fineweb_edu/fineweb_edu_15b_llama2_tc/fineweb_edu_15b_llama2_tc.jsonl
+```
+
+The eval does not score the full 66GB training prefix directly. It prepares a
+deterministic 10k-document slice from the last 1% of the JSONL, matching the
+spirit of the Megatron `--split 99,1,0` validation split, and then runs
+`loglikelihood_rolling` with:
+
+- `word_perplexity`
+- `byte_perplexity`
+- `bits_per_byte`
+
+Smoke command for a native Megatron checkpoint:
+
+```bash
+CKPT=/path/to/native/megatron/checkpoint \
+LLAMA2_TOKENIZER_MODEL=/iopsstor/scratch/cscs/course_00206/llama2-tokenizer/tokenizer.model \
+RUN_NAME=my-run-fineweb-edu-smoke10 \
+LIMIT=10 \
+_research/eval/submit_lm_eval_fineweb_edu.sh
+```
+
+For a full slice eval, set `FINEWEB_FULL=1`, use the normal partition, and give
+the job a longer time limit. This should be more sensitive to actual
+training/validation-loss improvements than HellaSwag, PIQA, or WinoGrande.
+
+Initial `LIMIT=10` smoke on the final 1.3B DeltaNet checkpoint completed, but
+this number is now only a debugging artifact because the server was missing the
+DeltaNet attention variant:
+
+| Checkpoint | bits/byte | byte perplexity | word perplexity |
+| --- | ---: | ---: | ---: |
+| DeltaNet 1.3B Muon, iter 19073 | 6.7477 | 107.46 | 1.06e13 |
+
+This smoke does not validate model quality. It was useful because the very poor
+byte-level result led to the server-log audit below.
+
+I also checked the downstream `lm_eval` samples, the API calibration probes, and
+the server logs. The completion logprob contract itself is behaving sensibly:
+scores are not constant, predictions are not stuck on one label, and simple
+probes prefer `Paris` over `banana`, `Rome` over `spoon`, etc. But the server
+logs exposed the real issue with the DeltaNet/GDN evals: the local experimental
+attention settings were not restored by `--use-checkpoint-args`. The fix is to
+load these architecture-defining fields from the native checkpoint args:
+
+- `experimental_attention_variant`
+- `linear_attention_freq`
+- `linear_conv_kernel_dim`
+- `linear_key_head_dim`
+- `linear_value_head_dim`
+- `linear_num_key_heads`
+- `linear_num_value_heads`
+- `attention_output_gate`
+
+I also found two FineWeb rolling-eval details to harden before using this for
+final comparisons:
+
+- preserve BOS/EOS pieces in `/detokenize`, so rolling perplexity keeps the
+  one-token prefix aligned with `lm_eval`'s `ctxlen=1` slicing;
+- pass `LM_EVAL_MAX_LENGTH=4096` for FineWeb-Edu, so long documents use the
+  same context length as the Megatron server instead of `lm_eval`'s 2048
+  default.
+
+After adding that checkpoint-arg fix, a tiny DeltaNet smoke confirmed the next
+blocker:
+
+- with `--transformer-impl local`, the correct DeltaNet block refuses to build
+  because the experimental block spec currently requires Transformer Engine;
+- with `--transformer-impl transformer_engine`, the checkpoint loads with
+  `experimental_attention_variant=delta_net` and `linear_attention_freq=3`, but
+  the first completion request fails inside `megatron/core/ssm/delta_net.py`
+  with `NotImplementedError: DeltaNet does not support inference for now.`
+
+So the previous random-looking DeltaNet/GDN downstream numbers should not be
+used. The proper next step is either to implement static inference support for
+the DeltaRule modules, or to add a direct full-forward loglikelihood scorer that
+does not use Megatron's autoregressive inference context.
+
+I implemented the second path: a scoring-only local server that computes
+continuation loglikelihoods with full forward passes instead of Megatron's
+autoregressive inference context. This supports DeltaNet and GDN checkpoints
+with the architecture args restored from the native checkpoint.
+
+The first pass below is only a `LIMIT=100` sanity sweep, so it should not be
+treated as final benchmark quality. It is useful because it shows that the fixed
+path is no longer random-looking, restores hybrid vs pure DeltaRule correctly,
+and gives a clear scale-up signal for the larger DeltaNet checkpoints. The
+training-token counts come from the checkpoint progress logs: the 350M matrix is
+15B tokens, the 1.3B checkpoint is about 40B tokens, and the 3B checkpoint is
+about 60B tokens.
+
+| Size | Architecture | Variant | Optimizer | Iteration | Train tokens | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 350M | GDN | hybrid | Muon | 28610 | 15.0B | 0.3700 | 0.4700 | 0.6800 | 0.7000 | 0.5800 |
+| 350M | GDN | pure DeltaRule | Muon | 28610 | 15.0B | 0.4100 | 0.4800 | 0.6900 | 0.7200 | 0.5800 |
+| 350M | DeltaNet | hybrid | Muon | 28610 | 15.0B | 0.4200 | 0.4900 | 0.7000 | 0.7200 | 0.6100 |
+| 350M | DeltaNet | pure DeltaRule | Muon | 28610 | 15.0B | 0.3900 | 0.4600 | 0.6700 | 0.7100 | 0.5600 |
+| 350M | GDN | hybrid | AdamW | 28610 | 15.0B | 0.4000 | 0.4500 | 0.6300 | 0.6600 | 0.5200 |
+| 350M | GDN | pure DeltaRule | AdamW | 28610 | 15.0B | 0.3600 | 0.4300 | 0.6700 | 0.6700 | 0.5900 |
+| 350M | DeltaNet | hybrid | AdamW | 28610 | 15.0B | 0.3800 | 0.4700 | 0.6700 | 0.6600 | 0.6200 |
+| 350M | DeltaNet | pure DeltaRule | AdamW | 28610 | 15.0B | 0.3900 | 0.4400 | 0.6700 | 0.6700 | 0.5000 |
+| 1.3B | DeltaNet | hybrid | Muon | 19073 | 40.0B | 0.4500 | 0.5300 | 0.7300 | 0.7600 | 0.5900 |
+| 3B | DeltaNet | hybrid | Muon | 7152 | 60.0B | 0.5100 | 0.6100 | 0.7200 | 0.7500 | 0.6300 |
+
+Short read from the provisional probes: the corrected scoring path now shows a
+real size signal, with 3B DeltaNet clearly above the 350M rows and the 1.3B row
+in between. On the 350M slice, Muon generally looks better than AdamW on PIQA,
+and hybrid DeltaNet looks better than pure DeltaRule on HellaSwag/WinoGrande.
+The full 3-task runs are queued and should replace this table once they finish.
+
+Full 3-task scoring results are now available for the full 350M matrix, the
+1.3B/3B DeltaNet runs, two 1.3B CLER-DeltaNet checkpoints, and the matching
+1.3B pure DeltaNet no-CLER comparator. These are the rows to use instead of the
+`LIMIT=100` probe above.
+
+| Size | Architecture | Variant | Optimizer | Iteration | Train tokens | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 350M | GDN | hybrid | Muon | 28610 | 15.0B | 0.3480 | 0.4158 | 0.6676 | 0.6741 | 0.5414 |
+| 350M | GDN | pure DeltaRule | Muon | 28610 | 15.0B | 0.3337 | 0.3978 | 0.6763 | 0.6741 | 0.4870 |
+| 350M | DeltaNet | hybrid | Muon | 28610 | 15.0B | 0.3541 | 0.4305 | 0.6681 | 0.6779 | 0.5051 |
+| 350M | DeltaNet | pure DeltaRule | Muon | 28610 | 15.0B | 0.3426 | 0.4133 | 0.6741 | 0.6801 | 0.5170 |
+| 350M | GDN | hybrid | AdamW | 28610 | 15.0B | 0.3369 | 0.3992 | 0.6616 | 0.6616 | 0.5099 |
+| 350M | GDN | pure DeltaRule | AdamW | 28610 | 15.0B | 0.3265 | 0.3817 | 0.6561 | 0.6572 | 0.5217 |
+| 350M | DeltaNet | hybrid | AdamW | 28610 | 15.0B | 0.3361 | 0.3987 | 0.6654 | 0.6513 | 0.5249 |
+| 350M | DeltaNet | pure DeltaRule | AdamW | 28610 | 15.0B | 0.3293 | 0.3918 | 0.6480 | 0.6551 | 0.5154 |
+| 1.3B | DeltaNet | hybrid | Muon | 19073 | 40.0B | 0.4277 | 0.5484 | 0.7209 | 0.7301 | 0.5572 |
+| 1.3B | DeltaNet | pure DeltaRule, no CLER | Muon | 19073 | 40.0B | 0.4119 | 0.5234 | 0.7106 | 0.7193 | 0.5612 |
+| 1.3B | CLER-DeltaNet | pure DeltaRule, gamma=0.1 | Muon | 19073 | 40.0B | 0.4049 | 0.5231 | 0.7089 | 0.7203 | 0.5446 |
+| 1.3B | CLER-DeltaNet | pure DeltaRule, gamma=0.0 | Muon | 19073 | 40.0B | 0.4078 | 0.5220 | 0.7095 | 0.7160 | 0.5627 |
+| 3B | DeltaNet | hybrid | Muon | 7152 | 60.0B | 0.4617 | 0.6063 | 0.7334 | 0.7410 | 0.5848 |
+
+Short read from the full rows: the corrected scorer gives a much clearer signal
+than the old static-server path. At 350M, Muon is consistently ahead of AdamW on
+HellaSwag acc_norm and PIQA acc_norm. Hybrid DeltaNet is the strongest 350M row
+on HellaSwag, while pure DeltaRule DeltaNet is slightly best on PIQA. The 1.3B
+and 3B DeltaNet checkpoints show a clear scale-up gain over the 350M rows, with
+3B strongest overall on all three tasks. The isolated 1.3B pure DeltaRule
+comparison shows no clear downstream-task gain from CLER: gamma=0.1 is
+essentially tied on HellaSwag acc_norm and slightly higher on PIQA acc_norm, but
+lower on WinoGrande; gamma=0.0 is slightly higher on WinoGrande, but lower on
+HellaSwag acc_norm and PIQA acc_norm. The effects are small and mixed.
