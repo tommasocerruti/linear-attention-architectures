@@ -30,7 +30,9 @@ from megatron.core.ssm.mamba_context_parallel import (
 from megatron.core.ssm.cler_utils import (
     chunk_gated_delta_rule_with_residual,
     inject_cler_residual,
+    inject_cler_residual_attnres,
     inject_cler_residual_dynamic,
+    make_cler_attn_params,
     make_cler_gamma_parameter,
     make_cler_gate,
 )
@@ -221,7 +223,19 @@ class GatedDeltaNet(MegatronModule):
         self.cler_residual = None
         self.cler_gate = None
         self.cler_gate_activation = None
-        if self.config.cler_enabled and self.config.cler_dynamic_gate:
+        self.cler_attn_query = None
+        self.cler_attn_self_bias = None
+        if self.config.cler_enabled and self.config.cler_routing_mode == "attnres":
+            # AttnRes-style routing: convex softmax attention over {value} + prior write residuals.
+            self.register_parameter("cler_gamma", None)
+            self.cler_attn_query, self.cler_attn_self_bias = make_cler_attn_params(
+                config=self.config,
+                num_value_heads_local_tp=self.num_v_heads_local_tp,
+                value_head_dim=self.value_head_dim,
+                cp_size=self.cp_size,
+                variant_name="GDN",
+            )
+        elif self.config.cler_enabled and self.config.cler_dynamic_gate:
             # Data-dependent per-token gate replaces the static gamma parameter.
             self.register_parameter("cler_gamma", None)
             self.cler_gate = make_cler_gate(
@@ -432,7 +446,16 @@ class GatedDeltaNet(MegatronModule):
         )
         nvtx_range_pop(suffix="prepare_qkv_for_gated_delta_rule")
 
-        if self.config.cler_enabled and self.config.cler_dynamic_gate:
+        if self.config.cler_enabled and self.config.cler_routing_mode == "attnres":
+            value = inject_cler_residual_attnres(
+                value=value,
+                residual_stack=cler_residual,
+                cler_query=self.cler_attn_query,
+                cler_self_bias=self.cler_attn_self_bias,
+                config=self.config,
+                variant_name="GDN",
+            )
+        elif self.config.cler_enabled and self.config.cler_dynamic_gate:
             value, gate_activation = inject_cler_residual_dynamic(
                 value=value,
                 cler_residual=cler_residual,

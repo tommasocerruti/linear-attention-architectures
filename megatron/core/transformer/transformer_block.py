@@ -548,6 +548,12 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         if not self.config.cler_enabled:
             return None
         latest_residual, residual_sum, residual_count, residuals = cler_state
+        if self.config.cler_routing_mode == "attnres":
+            # Pass the raw stack of prior write residuals; the mixer does the AttnRes-style
+            # convex attention over {its own value} + these residuals.
+            if not getattr(layer, "supports_cler", False) or len(residuals) == 0:
+                return None
+            return torch.stack(residuals, dim=0)
         if self.config.cler_routing_mode == "dense_softmax":
             if (
                 not getattr(layer, "supports_cler", False)
@@ -593,7 +599,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
             return cler_state
 
         _, residual_sum, residual_count, residuals = cler_state
-        if self.config.cler_routing_mode == "dense_softmax":
+        if self.config.cler_routing_mode in ("dense_softmax", "attnres"):
             return emitted_residual, residual_sum, residual_count + 1, residuals + (
                 emitted_residual,
             )
@@ -996,7 +1002,11 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 # a sub-layer is recovered as (output - attn-res input), leaving TransformerLayer
                 # and the mixer kernels unchanged.
                 attn_res_values = [hidden_states]
+                # CLER may be combined with AttnRes: the GDN delta-rule write residual is routed
+                # into the attention sub-layer's value target. cler_state is inert when CLER is off.
+                cler_state = self._initial_cler_state()
                 for l_no, layer in enumerate(self.layers):
+                    cler_residual = self._get_routed_cler_residual(layer, l_no, cler_state)
                     if use_inner_quantization_context:
                         if self.config.fp8:
                             inner_quantization_context = get_fp8_context(
@@ -1028,6 +1038,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             packed_seq_params=packed_seq_params,
                             sequence_len_offset=sequence_len_offset,
                             padding_mask=padding_mask,
+                            cler_residual=cler_residual,
                         )
                         attn_res_values.append(hidden_states - attn_input)
 
@@ -1037,6 +1048,8 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             mlp_input, inference_context, padding_mask=padding_mask
                         )
                         attn_res_values.append(hidden_states - mlp_input)
+
+                    cler_state = self._update_cler_state(layer, cler_state)
 
                     if (l_no + layer_offset) in extract_layer_indices:
                         intermediate_hidden_states.append(hidden_states)

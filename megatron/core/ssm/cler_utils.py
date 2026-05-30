@@ -237,6 +237,84 @@ def inject_cler_residual_dynamic(
     return value + gate * cler_residual, gate
 
 
+def make_cler_attn_params(
+    *,
+    config,
+    num_value_heads_local_tp: int,
+    value_head_dim: int,
+    cp_size: int,
+    variant_name: str,
+):
+    """Create the learned query + self-bias for AttnRes-style CLER routing.
+
+    ``query`` is a per-head pseudo-query (``[heads, head_dim]``, zero-init, like AttnRes);
+    ``self_bias`` (per head, init high) biases the softmax toward the receiver's own value so the
+    layer starts close to baseline and learns to fold in routed write residuals.
+    """
+    if cp_size != 1:
+        raise NotImplementedError(
+            f"CLER attnres routing for {variant_name} is implemented for context parallel size 1."
+        )
+    query = nn.Parameter(
+        torch.zeros(
+            num_value_heads_local_tp,
+            value_head_dim,
+            dtype=config.params_dtype,
+            device=torch.cuda.current_device(),
+        )
+    )
+    self_bias = nn.Parameter(
+        torch.full(
+            (num_value_heads_local_tp,),
+            6.0,
+            dtype=config.params_dtype,
+            device=torch.cuda.current_device(),
+        )
+    )
+    for p in (query, self_bias):
+        setattr(p, "tensor_model_parallel", True)
+        setattr(p, "partition_dim", 0)
+    return query, self_bias
+
+
+def inject_cler_residual_attnres(
+    *,
+    value: Tensor,
+    residual_stack: Tensor | None,
+    cler_query: Tensor,
+    cler_self_bias: Tensor,
+    config,
+    variant_name: str,
+) -> Tensor:
+    """Replace the value target with an AttnRes-style convex softmax attention over depth.
+
+    Sources are the receiver's own value plus all prior GDN write residuals (``residual_stack``,
+    shape ``[n, b, s, heads, dim]``). Weights are ``softmax_i(query . RMSNorm(source_i) [+ self_bias])``
+    over the ``n+1`` sources (per token/head), and the new value target is the convex combination
+    ``sum_i alpha_i source_i`` -- mirroring Attention Residuals, applied to CLER's write residuals.
+    """
+    if residual_stack is None:
+        # First CLER layer (no prior residual): keep params in the graph with zero contribution.
+        keep = (cler_query.float().sum() + cler_self_bias.float().sum()).to(dtype=value.dtype)
+        return value + keep * value.new_zeros(())
+
+    if config.cler_detach_residual:
+        residual_stack = residual_stack.detach()
+    sources = torch.cat(
+        [value.unsqueeze(0), residual_stack.to(dtype=value.dtype)], dim=0
+    )  # [n+1, b, s, heads, dim]
+    # logits = query . RMSNorm(source) = (query . source) / rms(source); avoid a full fp32 copy.
+    inv_rms = torch.rsqrt(
+        sources.square().mean(dim=-1).float() + config.cler_residual_norm_eps
+    )  # [n+1, b, s, heads]
+    dots = torch.einsum("nbshd,hd->nbsh", sources, cler_query.to(dtype=sources.dtype)).float()
+    logits = dots * inv_rms
+    self_logit = logits[0] + cler_self_bias.float().view(1, 1, -1)  # [b, s, heads]
+    logits = torch.cat([self_logit.unsqueeze(0), logits[1:]], dim=0)  # [n+1, b, s, heads]
+    weights = torch.softmax(logits, dim=0).to(dtype=sources.dtype)  # [n+1, b, s, heads]
+    return torch.einsum("nbsh,nbshd->bshd", weights, sources)  # [b, s, heads, dim]
+
+
 def _require_fla() -> None:
     if not HAVE_FLA:
         raise ImportError(

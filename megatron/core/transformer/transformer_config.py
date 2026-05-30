@@ -302,8 +302,10 @@ class TransformerConfig(ModelParallelConfig):
     cler_detach_residual: bool = False
     """Detach the routed CLER residual before injecting it into the next layer."""
 
-    cler_routing_mode: Literal["latest", "dense_mean", "dense_softmax"] = "latest"
-    """Which previous CLER residuals to route: nearest, mean, or learned softmax over all previous."""
+    cler_routing_mode: Literal["latest", "dense_mean", "dense_softmax", "attnres"] = "latest"
+    """Which previous CLER residuals to route: nearest, mean, learned softmax over all previous, or
+    'attnres' = AttnRes-style convex softmax attention (learned per-head query, RMSNorm keys) over
+    {the receiver's own value} + {all prior GDN write residuals}, replacing the value target."""
 
     cler_dynamic_gate: bool = False
     """Replace the static CLER receiver scalar/head/channel gamma with a data-dependent per-token,
@@ -1144,10 +1146,10 @@ class TransformerConfig(ModelParallelConfig):
                 f"got {self.cler_gamma_mode!r}."
             )
 
-        if self.cler_routing_mode not in {"latest", "dense_mean", "dense_softmax"}:
+        if self.cler_routing_mode not in {"latest", "dense_mean", "dense_softmax", "attnres"}:
             raise ValueError(
-                "cler_routing_mode must be one of 'latest', 'dense_mean', or 'dense_softmax', "
-                f"got {self.cler_routing_mode!r}."
+                "cler_routing_mode must be one of 'latest', 'dense_mean', 'dense_softmax', or "
+                f"'attnres', got {self.cler_routing_mode!r}."
             )
 
         if self.cler_residual_norm_eps <= 0.0:
@@ -1160,10 +1162,8 @@ class TransformerConfig(ModelParallelConfig):
             raise ValueError("cler_dynamic_gate requires cler_enabled.")
 
         if self.attn_res_enabled:
-            if self.cler_enabled:
-                raise ValueError(
-                    "attn_res_enabled and cler_enabled cannot be used together in v1."
-                )
+            # AttnRes and CLER may be combined: AttnRes attends over the whole residual stream,
+            # CLER additionally routes the GDN delta-rule write residual into the value target.
             if self.pipeline_model_parallel_size > 1:
                 raise ValueError(
                     "attn_res_enabled (Full AttnRes) requires all layer outputs within one "
