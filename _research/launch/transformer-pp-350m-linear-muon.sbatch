@@ -3,6 +3,7 @@
 # Shared 350M Linear-RNN Muon launcher for FineWeb-Edu/LLaMA-2 runs.
 # Select the architecture with LINEAR_VARIANT:
 #   gdn_pytorch  - PyTorch Gated DeltaNet baseline, CLER off
+#   gdn_triton   - Triton/FLA Gated DeltaNet baseline, CLER off
 #   cler         - CLER v1 on PyTorch Gated DeltaNet
 #   cler_gdn_triton - CLER v1 on Triton/FLA Gated DeltaNet
 #   deltanet     - DeltaNet baseline
@@ -119,12 +120,34 @@ GIT_SHA=$(git -C "$WORKDIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 LINEAR_ARGS=()
 CLER_ARGS=()
+# Full Attention Residuals (AttnRes) passthrough, independent of the mixer variant.
+ATTN_RES_ARGS=()
+if [ "${ATTN_RES_ENABLED:-0}" = "1" ]; then
+    ATTN_RES_ARGS=(--attn-res-enabled)
+fi
 WANDB_ARCH_DEFAULT=
 APERTUS_FEATURE_DEFAULT=
 APERTUS_TRACK_DEFAULT=
 EXP_NAME_DEFAULT=
 
 case "$LINEAR_VARIANT" in
+    gdn_triton)
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        LINEAR_ARGS=(
+            --experimental-attention-variant gated_delta_net
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
+            --attention-output-gate
+        )
+        WANDB_ARCH_DEFAULT=gdn-triton
+        APERTUS_FEATURE_DEFAULT=gdn-triton-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-gdn-triton-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-gdn-triton-muon-$GIT_SHA
+        ;;
     gdn_pytorch)
         LINEAR_ARGS=(
             --experimental-attention-variant gated_delta_net_pytorch
@@ -157,6 +180,7 @@ case "$LINEAR_VARIANT" in
             --cler-enabled
             --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
             --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
             --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
         )
         if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -187,6 +211,7 @@ case "$LINEAR_VARIANT" in
             --cler-enabled
             --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
             --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
             --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
         )
         if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -245,6 +270,7 @@ case "$LINEAR_VARIANT" in
             --cler-enabled
             --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
             --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
             --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
         )
         if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -274,6 +300,7 @@ case "$LINEAR_VARIANT" in
             --cler-enabled
             --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
             --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
             --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
         )
         if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -303,12 +330,43 @@ case "$LINEAR_VARIANT" in
         EXP_NAME_DEFAULT=transformer-pp-350m-linear-transformer-pytorch-muon-$GIT_SHA
         ;;
     *)
-        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, cler_gdn_triton, deltanet, deltanet_pytorch, cler_deltanet_pytorch, cler_deltanet_triton, or linear_transformer_pytorch)" >&2
+        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_triton, gdn_pytorch, cler, cler_gdn_triton, deltanet, deltanet_pytorch, cler_deltanet_pytorch, cler_deltanet_triton, or linear_transformer_pytorch)" >&2
         exit 1
         ;;
 esac
 
+# Optional data-dependent CLER receiver gate (replaces static gamma), any CLER variant.
+if [ "${CLER_DYNAMIC_GATE:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
+    CLER_ARGS+=(--cler-dynamic-gate)
+fi
+
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}
+
+CHECKPOINT_ARGS=()
+if [ "${ENABLE_CHECKPOINTING:-0}" = "1" ]; then
+    SAVE_DIR=${SAVE_DIR:-$SCRATCH_REPO_DIR/_research/results/checkpoints/$EXP_NAME-$SLURM_JOB_ID}
+    SAVE_INTERVAL=${SAVE_INTERVAL:-500}
+    CKPT_FORMAT=${CKPT_FORMAT:-torch}
+    NO_SAVE_OPTIM=${NO_SAVE_OPTIM:-0}
+    NO_SAVE_RNG=${NO_SAVE_RNG:-0}
+    mkdir -p "$SAVE_DIR"
+    CHECKPOINT_ARGS=(
+        --save "$SAVE_DIR"
+        --save-interval "$SAVE_INTERVAL"
+    )
+    if [ -n "${LOAD_DIR:-}" ]; then
+        CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
+    fi
+    if [ -n "$CKPT_FORMAT" ]; then
+        CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
+    fi
+    if [ "$NO_SAVE_OPTIM" = "1" ]; then
+        CHECKPOINT_ARGS+=(--no-save-optim)
+    fi
+    if [ "$NO_SAVE_RNG" = "1" ]; then
+        CHECKPOINT_ARGS+=(--no-save-rng)
+    fi
+fi
 
 if [ -n "$TRAIN_ITERS" ]; then
     TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
@@ -457,6 +515,7 @@ MEGATRON_ARGS="\
     ${NETWORK_SIZE_ARGS[@]} \
     ${LINEAR_ARGS[@]} \
     ${CLER_ARGS[@]+"${CLER_ARGS[@]}"} \
+    ${ATTN_RES_ARGS[@]+"${ATTN_RES_ARGS[@]}"} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${MUON_ARGS[@]} \
@@ -465,6 +524,7 @@ MEGATRON_ARGS="\
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
     ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
+    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
@@ -481,9 +541,12 @@ export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
 export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
 export WANDB_CLER_GAMMA_MODE=${CLER_GAMMA_MODE:-scalar}
+export WANDB_CLER_ROUTING_MODE=${CLER_ROUTING_MODE:-latest}
 export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
 export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
 export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
+export WANDB_CLER_DYNAMIC_GATE=${CLER_DYNAMIC_GATE:-0}
+export WANDB_ATTN_RES_ENABLED=${ATTN_RES_ENABLED:-0}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then

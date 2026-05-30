@@ -6,6 +6,23 @@ LOCK=$PKG_DIR/.install.lockdir
 
 mkdir -p "$PKG_DIR"
 
+clean_stale_numpy_metadata() {
+    shopt -s nullglob
+    local metadata
+    for metadata in "$PKG_DIR"/numpy-*.dist-info/METADATA; do
+        if ! grep -q '^Version:' "$metadata"; then
+            rm -rf "$(dirname "$metadata")"
+        fi
+    done
+    local dist_info
+    for dist_info in "$PKG_DIR"/numpy-*.dist-info; do
+        if [ ! -f "$dist_info/METADATA" ]; then
+            rm -rf "$dist_info"
+        fi
+    done
+    shopt -u nullglob
+}
+
 have_required_deps() {
     PYTHONPATH="$PKG_DIR${PYTHONPATH:+:$PYTHONPATH}" python3 - <<'PY' >/dev/null 2>&1
 import datasets
@@ -29,6 +46,8 @@ while ! mkdir "$LOCK" 2>/dev/null; do
 done
 trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
 
+clean_stale_numpy_metadata
+
 if [ -f "$MARKER" ] && have_required_deps; then exit 0; fi
 
 if command -v uv >/dev/null 2>&1; then
@@ -41,6 +60,7 @@ fi
 # any packages it clobbers (datasets, numpy) with our pinned versions after.
 $INSTALL --upgrade --target="$PKG_DIR" tilelang
 $INSTALL --upgrade --target="$PKG_DIR" transformers wandb datasets sentencepiece einops
+clean_stale_numpy_metadata
 $INSTALL --upgrade --no-deps --target="$PKG_DIR" \
     'causal-conv1d~=1.5' \
     'fla-core==0.5.0' \

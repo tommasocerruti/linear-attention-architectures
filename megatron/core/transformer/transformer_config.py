@@ -302,6 +302,20 @@ class TransformerConfig(ModelParallelConfig):
     cler_detach_residual: bool = False
     """Detach the routed CLER residual before injecting it into the next layer."""
 
+    cler_routing_mode: Literal["latest", "dense_mean", "dense_softmax"] = "latest"
+    """Which previous CLER residuals to route: nearest, mean, or learned softmax over all previous."""
+
+    cler_dynamic_gate: bool = False
+    """Replace the static CLER receiver scalar/head/channel gamma with a data-dependent per-token,
+    per-head gate sigmoid(Linear(value)), so the routed residual is scaled adaptively per token."""
+
+    attn_res_enabled: bool = False
+    """Enable Full Attention Residuals (AttnRes): replace the fixed residual sum with a learned
+    softmax attention over previous layer outputs (depth-wise), per Kimi/Moonshot AttnRes."""
+
+    attn_res_eps: float = 1e-6
+    """Numerical epsilon for the RMSNorm applied to AttnRes keys (previous layer outputs)."""
+
     ####################
     # DSA
     ####################
@@ -1130,11 +1144,35 @@ class TransformerConfig(ModelParallelConfig):
                 f"got {self.cler_gamma_mode!r}."
             )
 
+        if self.cler_routing_mode not in {"latest", "dense_mean", "dense_softmax"}:
+            raise ValueError(
+                "cler_routing_mode must be one of 'latest', 'dense_mean', or 'dense_softmax', "
+                f"got {self.cler_routing_mode!r}."
+            )
+
         if self.cler_residual_norm_eps <= 0.0:
             raise ValueError(
                 "cler_residual_norm_eps must be positive, "
                 f"got {self.cler_residual_norm_eps}."
             )
+
+        if self.cler_dynamic_gate and not self.cler_enabled:
+            raise ValueError("cler_dynamic_gate requires cler_enabled.")
+
+        if self.attn_res_enabled:
+            if self.cler_enabled:
+                raise ValueError(
+                    "attn_res_enabled and cler_enabled cannot be used together in v1."
+                )
+            if self.pipeline_model_parallel_size > 1:
+                raise ValueError(
+                    "attn_res_enabled (Full AttnRes) requires all layer outputs within one "
+                    "pipeline stage; pipeline_model_parallel_size > 1 is not supported in v1."
+                )
+            if self.attn_res_eps <= 0.0:
+                raise ValueError(
+                    f"attn_res_eps must be positive, got {self.attn_res_eps}."
+                )
 
         if self.experimental_attention_variant in {
             "gated_delta_net_pytorch",

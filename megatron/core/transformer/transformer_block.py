@@ -321,6 +321,8 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
 
         self._build_layers()
         self.num_layers_per_pipeline_rank = len(self.layers)
+        self.cler_route_queries = self._build_cler_route_queries()
+        self.attn_res_queries = self._build_attn_res_queries()
 
     def _build_layers(self):
         # Transformer layers.
@@ -383,6 +385,99 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         if self.config.inference_fuse_tp_communication:
             self._setup_fused_tp_communication()
 
+    def _build_cler_route_queries(self) -> Optional[torch.nn.ParameterDict]:
+        """Build AttnRes-style learned depth queries for dense CLER routing."""
+
+        if not (
+            self.config.cler_enabled and self.config.cler_routing_mode == "dense_softmax"
+        ):
+            return None
+
+        if self.config.linear_num_value_heads is None or self.config.linear_value_head_dim is None:
+            raise ValueError(
+                "dense_softmax CLER routing requires linear_num_value_heads and "
+                "linear_value_head_dim to be set."
+            )
+
+        head_divisor = self.config.tensor_model_parallel_size * self.config.context_parallel_size
+        if self.config.linear_num_value_heads % head_divisor != 0:
+            raise ValueError(
+                "dense_softmax CLER routing requires linear_num_value_heads to be divisible by "
+                f"tensor_model_parallel_size * context_parallel_size, got "
+                f"{self.config.linear_num_value_heads=} and {head_divisor=}."
+            )
+
+        num_value_heads_local = self.config.linear_num_value_heads // head_divisor
+        route_queries = torch.nn.ParameterDict()
+        has_previous_cler_layer = False
+        for local_layer_index, layer in enumerate(self.layers):
+            if not getattr(layer, "supports_cler", False):
+                continue
+            if not has_previous_cler_layer:
+                has_previous_cler_layer = True
+                continue
+            query = torch.nn.Parameter(
+                torch.zeros(
+                    num_value_heads_local,
+                    self.config.linear_value_head_dim,
+                    dtype=self.config.params_dtype,
+                    device=torch.cuda.current_device(),
+                )
+            )
+            setattr(query, "tensor_model_parallel", True)
+            setattr(query, "partition_dim", 0)
+            route_queries[str(local_layer_index)] = query
+        return route_queries
+
+    def _build_attn_res_queries(self) -> Optional[torch.nn.ParameterDict]:
+        """Build per-sub-layer learned pseudo-queries for Full Attention Residuals (AttnRes).
+
+        Following Attention Residuals (Kimi/Moonshot), each self-attention and each MLP is treated
+        as a separate "layer": its input is a softmax attention over all prior sub-layer outputs
+        (token embedding + each attention/MLP contribution). For ``L`` transformer layers there are
+        ``2L`` sub-layers; sub-layer ``m`` is keyed by ``str(m)`` (``2*l`` = attention of layer ``l``,
+        ``2*l+1`` = its MLP), plus one ``"final"`` query for the representation fed to the final
+        layernorm. Sub-layer 0 (the first attention) attends over only the token embedding (a single
+        input, uniform weight 1), so it needs no query; registering one would create a DDP
+        unused-parameter error.
+        """
+        if not self.config.attn_res_enabled:
+            return None
+        queries = torch.nn.ParameterDict()
+        num_sublayers = 2 * len(self.layers)
+        keys = [str(m) for m in range(1, num_sublayers)] + ["final"]
+        for key in keys:
+            queries[key] = torch.nn.Parameter(
+                torch.zeros(
+                    self.config.hidden_size,
+                    dtype=self.config.params_dtype,
+                    device=torch.cuda.current_device(),
+                )
+            )
+        return queries
+
+    def _attn_res_combine(self, values: list[Tensor], query_key: str) -> Tensor:
+        """Combine stored layer outputs via learned softmax attention over depth (AttnRes).
+
+        ``values`` is a list of ``[s, b, h]`` tensors (token embedding followed by each prior
+        layer's contribution). Keys are RMS-normalized over the hidden dimension so that
+        large-magnitude outputs do not dominate the attention weights; the query is the raw
+        learned pseudo-query. With a single value (layer 0) the softmax is trivial, so the value
+        is returned unchanged and no query is consumed.
+        """
+        if len(values) == 1:
+            return values[0]
+        query = self.attn_res_queries[query_key]
+        stack = torch.stack(values, dim=0)  # [n, s, b, h]
+        # logits = w . RMSNorm(v) = (w . v) / rms(v); computed without materializing a full
+        # fp32 copy of the stack (the fp32 RMSNorm(stack) was the throughput bottleneck).
+        dots = torch.einsum("nsbh,h->nsb", stack, query.to(dtype=stack.dtype)).float()
+        inv_rms = torch.rsqrt(
+            stack.square().mean(dim=-1).float() + self.config.attn_res_eps
+        )  # [n, s, b]
+        weights = torch.softmax(dots * inv_rms, dim=0).to(dtype=stack.dtype)  # [n, s, b]
+        return (weights.unsqueeze(-1) * stack).sum(dim=0)  # [s, b, h]
+
     def has_final_layernorm_in_this_stage(self):
         """
         Check if this vpp stage contains the final layernorm.
@@ -439,14 +534,75 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
     def _get_layer(self, layer_number: int):
         return self.layers[layer_number]
 
-    def _get_next_cler_residual(
-        self, layer, current_cler_residual: Optional[Tensor] = None
+    def _initial_cler_state(
+        self,
+    ) -> tuple[Optional[Tensor], Optional[Tensor], int, tuple[Tensor, ...]]:
+        return None, None, 0, ()
+
+    def _get_routed_cler_residual(
+        self,
+        layer,
+        local_layer_index: int,
+        cler_state: tuple[Optional[Tensor], Optional[Tensor], int, tuple[Tensor, ...]],
     ) -> Optional[Tensor]:
         if not self.config.cler_enabled:
             return None
-        if getattr(layer, "supports_cler", False):
-            return getattr(layer, "cler_residual", None)
-        return current_cler_residual
+        latest_residual, residual_sum, residual_count, residuals = cler_state
+        if self.config.cler_routing_mode == "dense_softmax":
+            if (
+                not getattr(layer, "supports_cler", False)
+                or len(residuals) == 0
+                or self.cler_route_queries is None
+                or str(local_layer_index) not in self.cler_route_queries
+            ):
+                return None
+            residual_stack = torch.stack(residuals, dim=0)
+            residual_keys = residual_stack.float()
+            residual_keys = residual_keys * torch.rsqrt(
+                residual_keys.square().mean(dim=-1, keepdim=True)
+                + self.config.cler_residual_norm_eps
+            )
+            query = self.cler_route_queries[str(local_layer_index)].to(dtype=residual_keys.dtype)
+            if tuple(query.shape) != tuple(residual_keys.shape[-2:]):
+                raise ValueError(
+                    "dense_softmax CLER route query must match residual heads/channels, "
+                    f"got query shape={tuple(query.shape)} and "
+                    f"residual shape={tuple(residual_keys.shape[-2:])}."
+                )
+            logits = (residual_keys * query.view(1, 1, 1, *query.shape)).sum(dim=-1)
+            weights = torch.softmax(logits, dim=0).to(dtype=residual_stack.dtype)
+            return (weights.unsqueeze(-1) * residual_stack).sum(dim=0)
+        if self.config.cler_routing_mode == "dense_mean":
+            if residual_sum is None or residual_count == 0:
+                return None
+            return residual_sum / residual_count
+        return latest_residual
+
+    def _update_cler_state(
+        self,
+        layer,
+        cler_state: tuple[Optional[Tensor], Optional[Tensor], int, tuple[Tensor, ...]],
+    ) -> tuple[Optional[Tensor], Optional[Tensor], int, tuple[Tensor, ...]]:
+        if not self.config.cler_enabled:
+            return self._initial_cler_state()
+        if not getattr(layer, "supports_cler", False):
+            return cler_state
+
+        emitted_residual = getattr(layer, "cler_residual", None)
+        if emitted_residual is None:
+            return cler_state
+
+        _, residual_sum, residual_count, residuals = cler_state
+        if self.config.cler_routing_mode == "dense_softmax":
+            return emitted_residual, residual_sum, residual_count + 1, residuals + (
+                emitted_residual,
+            )
+        if self.config.cler_routing_mode == "dense_mean":
+            residual_sum = (
+                emitted_residual if residual_sum is None else residual_sum + emitted_residual
+            )
+            return emitted_residual, residual_sum, residual_count + 1, residuals
+        return emitted_residual, residual_sum, residual_count, residuals
 
     def _checkpointed_forward(
         self,
@@ -489,9 +645,10 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 rotary_pos_emb,
                 padding_mask=None,
             ):
-                cler_residual = None
+                cler_state = self._initial_cler_state()
                 for index in range(start, end):
                     layer = self._get_layer(index)
+                    cler_residual = self._get_routed_cler_residual(layer, index, cler_state)
 
                     # Get appropriate inner quantization context
                     if use_inner_quantization_context:
@@ -522,7 +679,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             padding_mask=padding_mask,
                             cler_residual=cler_residual,
                         )
-                    cler_residual = self._get_next_cler_residual(layer, cler_residual)
+                    cler_state = self._update_cler_state(layer, cler_state)
                 return hidden_states, context
 
             return custom_forward
@@ -807,6 +964,11 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         with rng_context, outer_quantization_context:
             # Forward pass.
             if self.config.recompute_granularity == 'full' and self.training:
+                if self.config.attn_res_enabled:
+                    raise NotImplementedError(
+                        "attn_res_enabled (Full AttnRes) does not support full activation "
+                        "recompute in v1; run without --recompute-granularity full."
+                    )
                 checkpointed_result = self._checkpointed_forward(
                     hidden_states=hidden_states,
                     attention_mask=attention_mask,
@@ -827,9 +989,66 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 else:
                     # No intermediate_hidden_states requested: just hidden_states
                     hidden_states = checkpointed_result
-            else:
-                cler_residual = None
+            elif self.config.attn_res_enabled:
+                # Sub-layer Full Attention Residuals: each attention and each MLP is a separate
+                # "layer" whose input is a learned softmax attention over all prior sub-layer
+                # outputs (token embedding + each attention/MLP contribution). The contribution of
+                # a sub-layer is recovered as (output - attn-res input), leaving TransformerLayer
+                # and the mixer kernels unchanged.
+                attn_res_values = [hidden_states]
                 for l_no, layer in enumerate(self.layers):
+                    if use_inner_quantization_context:
+                        if self.config.fp8:
+                            inner_quantization_context = get_fp8_context(
+                                self.config, layer.layer_number - 1
+                            )
+                        elif self.config.fp4:
+                            inner_quantization_context = get_fp4_context(
+                                self.config, layer.layer_number - 1
+                            )
+                        else:
+                            inner_quantization_context = nullcontext()
+                    else:
+                        inner_quantization_context = nullcontext()
+
+                    with self.offload_context, inner_quantization_context:
+                        # Attention sub-layer (index 2*l_no).
+                        attn_input = self._attn_res_combine(attn_res_values, str(2 * l_no))
+                        hidden_states, context = layer._forward_attention(
+                            hidden_states=attn_input,
+                            attention_mask=attention_mask,
+                            context=context,
+                            context_mask=context_mask,
+                            rotary_pos_emb=rotary_pos_emb,
+                            rotary_pos_cos=rotary_pos_cos,
+                            rotary_pos_sin=rotary_pos_sin,
+                            rotary_pos_cos_sin=rotary_pos_cos_sin,
+                            attention_bias=attention_bias,
+                            inference_context=inference_context,
+                            packed_seq_params=packed_seq_params,
+                            sequence_len_offset=sequence_len_offset,
+                            padding_mask=padding_mask,
+                        )
+                        attn_res_values.append(hidden_states - attn_input)
+
+                        # MLP sub-layer (index 2*l_no + 1).
+                        mlp_input = self._attn_res_combine(attn_res_values, str(2 * l_no + 1))
+                        hidden_states = layer._forward_mlp(
+                            mlp_input, inference_context, padding_mask=padding_mask
+                        )
+                        attn_res_values.append(hidden_states - mlp_input)
+
+                    if (l_no + layer_offset) in extract_layer_indices:
+                        intermediate_hidden_states.append(hidden_states)
+
+                # Final representation fed to the head: softmax attention over all sub-layer
+                # outputs (token embedding + every attention/MLP contribution).
+                hidden_states = self._attn_res_combine(attn_res_values, "final")
+            else:
+                cler_state = self._initial_cler_state()
+                for l_no, layer in enumerate(self.layers):
+                    cler_residual = self._get_routed_cler_residual(layer, l_no, cler_state)
+
                     # Get appropriate inner quantization context
                     if use_inner_quantization_context:
                         if self.config.fp8:
@@ -862,7 +1081,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             padding_mask=padding_mask,
                             cler_residual=cler_residual,
                         )
-                    cler_residual = self._get_next_cler_residual(layer, cler_residual)
+                    cler_state = self._update_cler_state(layer, cler_state)
 
                     if (
                         torch.is_grad_enabled()

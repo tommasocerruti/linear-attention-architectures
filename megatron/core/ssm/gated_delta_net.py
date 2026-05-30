@@ -30,7 +30,9 @@ from megatron.core.ssm.mamba_context_parallel import (
 from megatron.core.ssm.cler_utils import (
     chunk_gated_delta_rule_with_residual,
     inject_cler_residual,
+    inject_cler_residual_dynamic,
     make_cler_gamma_parameter,
+    make_cler_gate,
 )
 from megatron.core.tensor_parallel import get_cuda_rng_tracker
 from megatron.core.transformer import TransformerConfig
@@ -217,7 +219,17 @@ class GatedDeltaNet(MegatronModule):
             self.gated_delta_rule = chunk_gated_delta_rule
         self.supports_cler = True
         self.cler_residual = None
-        if self.config.cler_enabled:
+        self.cler_gate = None
+        self.cler_gate_activation = None
+        if self.config.cler_enabled and self.config.cler_dynamic_gate:
+            # Data-dependent per-token gate replaces the static gamma parameter.
+            self.register_parameter("cler_gamma", None)
+            self.cler_gate = make_cler_gate(
+                config=self.config,
+                value_head_dim=self.value_head_dim,
+                variant_name="GDN",
+            )
+        elif self.config.cler_enabled:
             self.cler_gamma = make_cler_gamma_parameter(
                 config=self.config,
                 num_value_heads_local_tp=self.num_v_heads_local_tp,
@@ -307,6 +319,7 @@ class GatedDeltaNet(MegatronModule):
         cler_residual = kwargs.pop("cler_residual", None)
         del kwargs
         self.cler_residual = None
+        self.cler_gate_activation = None
 
         seq_len, batch, _ = hidden_states.shape
         seq_len = seq_len * self.sp_size * self.cp_size
@@ -419,7 +432,18 @@ class GatedDeltaNet(MegatronModule):
         )
         nvtx_range_pop(suffix="prepare_qkv_for_gated_delta_rule")
 
-        if self.config.cler_enabled:
+        if self.config.cler_enabled and self.config.cler_dynamic_gate:
+            value, gate_activation = inject_cler_residual_dynamic(
+                value=value,
+                cler_residual=cler_residual,
+                cler_gate=self.cler_gate,
+                config=self.config,
+                variant_name="GDN",
+            )
+            self.cler_gate_activation = (
+                gate_activation.detach() if gate_activation is not None else None
+            )
+        elif self.config.cler_enabled:
             value = inject_cler_residual(
                 value=value,
                 cler_residual=cler_residual,

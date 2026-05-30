@@ -186,6 +186,57 @@ def inject_cler_residual(
     return value + gamma * cler_residual
 
 
+def make_cler_gate(*, config, value_head_dim: int, variant_name: str) -> nn.Linear:
+    """Create a data-dependent per-token, per-head CLER receiver gate.
+
+    The gate is ``sigmoid(Linear(value))`` with shape ``[..., 1]`` broadcast over the value
+    channel dimension, so it scales the routed residual adaptively per token and per head instead
+    of using a single static learned coefficient. The weight is zero-initialized and the bias is
+    set so the initial gate matches the small static gamma scale observed empirically
+    (sigmoid(-3) ~= 0.047), i.e. the dynamic gate starts close to the static-CLER behavior and
+    then learns to modulate the route per token.
+    """
+    gate = nn.Linear(
+        value_head_dim,
+        1,
+        bias=True,
+        dtype=config.params_dtype,
+        device=torch.cuda.current_device(),
+    )
+    nn.init.zeros_(gate.weight)
+    nn.init.constant_(gate.bias, -3.0)
+    return gate
+
+
+def inject_cler_residual_dynamic(
+    *,
+    value: Tensor,
+    cler_residual: Tensor | None,
+    cler_gate: nn.Module,
+    config,
+    variant_name: str,
+) -> Tensor:
+    """Inject a previous layer's CLER residual scaled by a data-dependent per-token gate."""
+
+    if cler_residual is None:
+        # No previous residual (e.g. the first CLER-capable layer). Keep the gate parameters in
+        # the autograd graph with zero contribution to avoid DDP unused-parameter errors.
+        return value + cler_gate(value).mean() * value.new_zeros(()), None
+
+    if config.cler_detach_residual:
+        cler_residual = cler_residual.detach()
+    if cler_residual.shape != value.shape:
+        raise ValueError(
+            f"CLER residual shape must match the current {variant_name} value shape, "
+            f"got cler_residual.shape={cler_residual.shape} and value.shape={value.shape}."
+        )
+    cler_residual = normalize_cler_residual(config, cler_residual)
+    gate = torch.sigmoid(cler_gate(value))  # [batch, seq, value_heads, 1]
+    # Return the gate so callers can log its statistics (it is the data-dependent
+    # replacement for the static cler_gamma).
+    return value + gate * cler_residual, gate
+
+
 def _require_fla() -> None:
     if not HAVE_FLA:
         raise ImportError(
