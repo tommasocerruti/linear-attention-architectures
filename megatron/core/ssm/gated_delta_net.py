@@ -225,6 +225,7 @@ class GatedDeltaNet(MegatronModule):
         self.cler_gate_activation = None
         self.cler_attn_query = None
         self.cler_attn_self_bias = None
+        self.cler_attn_self_gate = None
         if self.config.cler_enabled and self.config.cler_routing_mode == "attnres":
             # AttnRes-style routing: convex softmax attention over {value} + prior write residuals.
             self.register_parameter("cler_gamma", None)
@@ -235,6 +236,15 @@ class GatedDeltaNet(MegatronModule):
                 cp_size=self.cp_size,
                 variant_name="GDN",
             )
+            if self.config.cler_dynamic_gate:
+                # Dynamic-gate variant: data-dependent per-token self-bias (Linear(value)).
+                self.register_parameter("cler_attn_self_bias", None)
+                self.cler_attn_self_gate = make_cler_gate(
+                    config=self.config,
+                    value_head_dim=self.value_head_dim,
+                    variant_name="GDN",
+                    bias_init=6.0,
+                )
         elif self.config.cler_enabled and self.config.cler_dynamic_gate:
             # Data-dependent per-token gate replaces the static gamma parameter.
             self.register_parameter("cler_gamma", None)
@@ -454,6 +464,7 @@ class GatedDeltaNet(MegatronModule):
                 cler_self_bias=self.cler_attn_self_bias,
                 config=self.config,
                 variant_name="GDN",
+                cler_self_gate=self.cler_attn_self_gate,
             )
         elif self.config.cler_enabled and self.config.cler_dynamic_gate:
             value, gate_activation = inject_cler_residual_dynamic(

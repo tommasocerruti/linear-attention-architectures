@@ -186,7 +186,9 @@ def inject_cler_residual(
     return value + gamma * cler_residual
 
 
-def make_cler_gate(*, config, value_head_dim: int, variant_name: str) -> nn.Linear:
+def make_cler_gate(
+    *, config, value_head_dim: int, variant_name: str, bias_init: float = -3.0
+) -> nn.Linear:
     """Create a data-dependent per-token, per-head CLER receiver gate.
 
     The gate is ``sigmoid(Linear(value))`` with shape ``[..., 1]`` broadcast over the value
@@ -204,7 +206,7 @@ def make_cler_gate(*, config, value_head_dim: int, variant_name: str) -> nn.Line
         device=torch.cuda.current_device(),
     )
     nn.init.zeros_(gate.weight)
-    nn.init.constant_(gate.bias, -3.0)
+    nn.init.constant_(gate.bias, bias_init)
     return gate
 
 
@@ -282,9 +284,10 @@ def inject_cler_residual_attnres(
     value: Tensor,
     residual_stack: Tensor | None,
     cler_query: Tensor,
-    cler_self_bias: Tensor,
+    cler_self_bias: Tensor | None,
     config,
     variant_name: str,
+    cler_self_gate: nn.Module | None = None,
 ) -> Tensor:
     """Replace the value target with an AttnRes-style convex softmax attention over depth.
 
@@ -292,11 +295,20 @@ def inject_cler_residual_attnres(
     shape ``[n, b, s, heads, dim]``). Weights are ``softmax_i(query . RMSNorm(source_i) [+ self_bias])``
     over the ``n+1`` sources (per token/head), and the new value target is the convex combination
     ``sum_i alpha_i source_i`` -- mirroring Attention Residuals, applied to CLER's write residuals.
+
+    The self-bias on the value source starts high so the receiver begins ~ at its own value
+    (baseline) and learns to fold in routed errors. With ``cler_self_gate`` (dynamic-gate variant)
+    the self-bias is data-dependent per token: ``Linear(value)`` instead of a static parameter.
     """
     if residual_stack is None:
         # First CLER layer (no prior residual): keep params in the graph with zero contribution.
-        keep = (cler_query.float().sum() + cler_self_bias.float().sum()).to(dtype=value.dtype)
-        return value + keep * value.new_zeros(())
+        keep = cler_query.float().sum()
+        keep = keep + (
+            cler_self_gate(value).float().sum()
+            if cler_self_gate is not None
+            else cler_self_bias.float().sum()
+        )
+        return value + keep.to(dtype=value.dtype) * value.new_zeros(())
 
     if config.cler_detach_residual:
         residual_stack = residual_stack.detach()
@@ -309,7 +321,11 @@ def inject_cler_residual_attnres(
     )  # [n+1, b, s, heads]
     dots = torch.einsum("nbshd,hd->nbsh", sources, cler_query.to(dtype=sources.dtype)).float()
     logits = dots * inv_rms
-    self_logit = logits[0] + cler_self_bias.float().view(1, 1, -1)  # [b, s, heads]
+    if cler_self_gate is not None:
+        self_bias_add = cler_self_gate(value).squeeze(-1).float()  # [b, s, heads]
+    else:
+        self_bias_add = cler_self_bias.float().view(1, 1, -1)  # broadcast [b, s, heads]
+    self_logit = logits[0] + self_bias_add  # [b, s, heads]
     logits = torch.cat([self_logit.unsqueeze(0), logits[1:]], dim=0)  # [n+1, b, s, heads]
     weights = torch.softmax(logits, dim=0).to(dtype=sources.dtype)  # [n+1, b, s, heads]
     return torch.einsum("nbsh,nbshd->bshd", weights, sources)  # [b, s, heads, dim]
