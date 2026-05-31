@@ -323,6 +323,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         self.num_layers_per_pipeline_rank = len(self.layers)
         self.cler_route_queries = self._build_cler_route_queries()
         self.attn_res_queries = self._build_attn_res_queries()
+        self.cler_hidden_proj = self._build_cler_hidden_projections()
 
     def _build_layers(self):
         # Transformer layers.
@@ -455,6 +456,24 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 )
             )
         return queries
+
+    def _build_cler_hidden_projections(self) -> Optional[torch.nn.ModuleDict]:
+        """Build per-GDN-layer value->hidden projections for CLER-H (zero-init)."""
+        if not (self.config.cler_enabled and getattr(self.config, "cler_hidden_routing", False)):
+            return None
+        from megatron.core.ssm.cler_hidden_routing import make_cler_hidden_projection
+
+        value_dim = self.config.linear_num_value_heads * self.config.linear_value_head_dim
+        projs = torch.nn.ModuleDict()
+        for idx, layer in enumerate(self.layers):
+            if getattr(getattr(layer, "self_attention", None), "supports_cler", False):
+                projs[str(idx)] = make_cler_hidden_projection(
+                    value_dim=value_dim,
+                    hidden_size=self.config.hidden_size,
+                    dtype=self.config.params_dtype,
+                    device=torch.cuda.current_device(),
+                )
+        return projs
 
     def _attn_res_combine(self, values: list[Tensor], query_key: str) -> Tensor:
         """Combine stored layer outputs via learned softmax attention over depth (AttnRes).
@@ -1057,6 +1076,56 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 # Final representation fed to the head: softmax attention over all sub-layer
                 # outputs (token embedding + every attention/MLP contribution).
                 hidden_states = self._attn_res_combine(attn_res_values, "final")
+            elif self.config.cler_enabled and self.config.cler_hidden_routing:
+                # CLER-H: route the GDN write residual, projected into the shared hidden space, into
+                # the hidden stream entering later layers (instead of into the value target). The
+                # mixer still emits its write residual (cler_enabled) but we pass cler_residual=None
+                # so no value-target injection happens.
+                from megatron.core.ssm.cler_hidden_routing import project_residual_to_hidden
+
+                for l_no, layer in enumerate(self.layers):
+                    if use_inner_quantization_context:
+                        if self.config.fp8:
+                            inner_quantization_context = get_fp8_context(
+                                self.config, layer.layer_number - 1
+                            )
+                        elif self.config.fp4:
+                            inner_quantization_context = get_fp4_context(
+                                self.config, layer.layer_number - 1
+                            )
+                        else:
+                            inner_quantization_context = nullcontext()
+                    else:
+                        inner_quantization_context = nullcontext()
+
+                    with self.offload_context, inner_quantization_context:
+                        hidden_states, context = layer(
+                            hidden_states=hidden_states,
+                            attention_mask=attention_mask,
+                            context=context,
+                            context_mask=context_mask,
+                            rotary_pos_emb=rotary_pos_emb,
+                            rotary_pos_cos=rotary_pos_cos,
+                            rotary_pos_sin=rotary_pos_sin,
+                            rotary_pos_cos_sin=rotary_pos_cos_sin,
+                            attention_bias=attention_bias,
+                            inference_context=inference_context,
+                            packed_seq_params=packed_seq_params,
+                            sequence_len_offset=sequence_len_offset,
+                            padding_mask=padding_mask,
+                            cler_residual=None,
+                        )
+
+                    # Add this GDN layer's projected write residual to the residual stream; it then
+                    # persists to all later layers (and the final layernorm) via the residual path.
+                    emitted = getattr(layer, "cler_residual", None)
+                    if emitted is not None and str(l_no) in self.cler_hidden_proj:
+                        hidden_states = hidden_states + project_residual_to_hidden(
+                            self.cler_hidden_proj[str(l_no)], emitted
+                        )
+
+                    if (l_no + layer_offset) in extract_layer_indices:
+                        intermediate_hidden_states.append(hidden_states)
             else:
                 cler_state = self._initial_cler_state()
                 for l_no, layer in enumerate(self.layers):

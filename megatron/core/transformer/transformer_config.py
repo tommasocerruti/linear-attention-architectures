@@ -311,6 +311,11 @@ class TransformerConfig(ModelParallelConfig):
     """Replace the static CLER receiver scalar/head/channel gamma with a data-dependent per-token,
     per-head gate sigmoid(Linear(value)), so the routed residual is scaled adaptively per token."""
 
+    cler_hidden_routing: bool = False
+    """CLER-H: project the GDN write residual into the shared hidden (d_model) space and add it to
+    the hidden stream entering later layers, instead of injecting it into the value target. Routes
+    CLER's error signal in the aligned residual-stream space (cf. Attention Residuals)."""
+
     attn_res_enabled: bool = False
     """Enable Full Attention Residuals (AttnRes): replace the fixed residual sum with a learned
     softmax attention over previous layer outputs (depth-wise), per Kimi/Moonshot AttnRes."""
@@ -1160,6 +1165,14 @@ class TransformerConfig(ModelParallelConfig):
 
         if self.cler_dynamic_gate and not self.cler_enabled:
             raise ValueError("cler_dynamic_gate requires cler_enabled.")
+
+        if self.cler_hidden_routing:
+            if not self.cler_enabled:
+                raise ValueError("cler_hidden_routing requires cler_enabled (to emit write residuals).")
+            if self.pipeline_model_parallel_size > 1:
+                raise ValueError("cler_hidden_routing is implemented for pipeline_model_parallel_size 1.")
+            if self.tensor_model_parallel_size > 1:
+                raise ValueError("cler_hidden_routing is implemented for tensor_model_parallel_size 1.")
 
         if self.attn_res_enabled:
             # AttnRes and CLER may be combined: AttnRes attends over the whole residual stream,

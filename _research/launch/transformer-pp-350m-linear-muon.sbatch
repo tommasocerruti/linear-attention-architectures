@@ -340,6 +340,11 @@ if [ "${CLER_DYNAMIC_GATE:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
     CLER_ARGS+=(--cler-dynamic-gate)
 fi
 
+# CLER-H: route the write residual into the shared hidden stream (not the value target).
+if [ "${CLER_HIDDEN_ROUTING:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
+    CLER_ARGS+=(--cler-hidden-routing)
+fi
+
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}
 
 CHECKPOINT_ARGS=()
@@ -546,6 +551,7 @@ export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
 export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
 export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
 export WANDB_CLER_DYNAMIC_GATE=${CLER_DYNAMIC_GATE:-0}
+export WANDB_CLER_HIDDEN_ROUTING=${CLER_HIDDEN_ROUTING:-0}
 export WANDB_ATTN_RES_ENABLED=${ATTN_RES_ENABLED:-0}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
 
