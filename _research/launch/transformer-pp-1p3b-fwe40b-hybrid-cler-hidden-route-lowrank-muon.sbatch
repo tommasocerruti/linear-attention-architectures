@@ -21,7 +21,7 @@ export EXIT_DURATION_IN_MINS=800
 export LINEAR_VARIANT=cler_gdn_triton
 export LINEAR_ATTENTION_FREQ=3        # hybrid: 2 GDN : 1 SDPA (CLER-H routes the GDN write errors)
 export CLER_HIDDEN_ROUTING=1
-export CLER_HIDDEN_RANK=16
+export CLER_HIDDEN_RANK=64
 export WANDB_ARCH=hybrid-cler-gdn-hidden-route-lowrank
 export EXP_NAME=hybrid-cler-gdn-hidden-route-lowrank-1p3b-fwe40b-muon
 
