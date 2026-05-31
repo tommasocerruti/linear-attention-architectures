@@ -23,9 +23,20 @@ from torch import Tensor
 
 
 def make_cler_hidden_projection(
-    *, value_dim: int, hidden_size: int, dtype, device
-) -> nn.Linear:
-    """Linear value-space -> hidden-space projection for a routed write residual (zero-init)."""
+    *, value_dim: int, hidden_size: int, dtype, device, rank: int = 0
+) -> nn.Module:
+    """Value-space -> hidden-space projection for a routed write residual.
+
+    rank == 0: a full dense Linear(value_dim -> hidden_size) (large: value_dim*hidden_size params).
+    rank  > 0: a low-rank bottleneck Linear(value_dim -> rank) -> Linear(rank -> hidden_size), with
+    far fewer params (value_dim*rank + rank*hidden_size). Output weight zero-init either way, so the
+    routed contribution starts at 0 (exact baseline) and is learned.
+    """
+    if rank and rank > 0:
+        down = nn.Linear(value_dim, rank, bias=False, dtype=dtype, device=device)
+        up = nn.Linear(rank, hidden_size, bias=False, dtype=dtype, device=device)
+        nn.init.zeros_(up.weight)  # start at zero contribution
+        return nn.Sequential(down, up)
     proj = nn.Linear(value_dim, hidden_size, bias=False, dtype=dtype, device=device)
     nn.init.zeros_(proj.weight)
     return proj

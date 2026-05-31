@@ -472,6 +472,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                     hidden_size=self.config.hidden_size,
                     dtype=self.config.params_dtype,
                     device=torch.cuda.current_device(),
+                    rank=getattr(self.config, "cler_hidden_rank", 0),
                 )
         return projs
 

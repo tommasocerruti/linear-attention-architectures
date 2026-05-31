@@ -343,6 +343,9 @@ fi
 # CLER-H: route the write residual into the shared hidden stream (not the value target).
 if [ "${CLER_HIDDEN_ROUTING:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
     CLER_ARGS+=(--cler-hidden-routing)
+    if [ -n "${CLER_HIDDEN_RANK:-}" ]; then
+        CLER_ARGS+=(--cler-hidden-rank ${CLER_HIDDEN_RANK})
+    fi
 fi
 
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}

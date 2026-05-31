@@ -317,6 +317,10 @@ class TransformerConfig(ModelParallelConfig):
     the hidden stream entering later layers, instead of injecting it into the value target. Routes
     CLER's error signal in the aligned residual-stream space (cf. Attention Residuals)."""
 
+    cler_hidden_rank: int = 0
+    """CLER-H projection rank. 0 = full dense Linear(value_dim -> d_model) (large); r>0 = a low-rank
+    bottleneck Linear(value_dim -> r) -> Linear(r -> d_model), drastically fewer params."""
+
     attn_res_enabled: bool = False
     """Enable Full Attention Residuals (AttnRes): replace the fixed residual sum with a learned
     softmax attention over previous layer outputs (depth-wise), per Kimi/Moonshot AttnRes."""
