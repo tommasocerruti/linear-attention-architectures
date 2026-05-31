@@ -273,6 +273,7 @@ class TransformerConfig(ModelParallelConfig):
     experimental_attention_variant: Optional[
         Literal[
             "gated_delta_net_pytorch",
+            "gated_delta_net2_pytorch",
             "gated_delta_net",
             "delta_net",
             "delta_net_pytorch",
@@ -1189,6 +1190,7 @@ class TransformerConfig(ModelParallelConfig):
 
         if self.experimental_attention_variant in {
             "gated_delta_net_pytorch",
+            "gated_delta_net2_pytorch",
             "gated_delta_net",
             "delta_net",
             "delta_net_pytorch",
@@ -1219,6 +1221,7 @@ class TransformerConfig(ModelParallelConfig):
             )
             if self.experimental_attention_variant in {
                 "gated_delta_net_pytorch",
+                "gated_delta_net2_pytorch",
                 "gated_delta_net",
             }:
                 assert self.linear_num_value_heads % self.linear_num_key_heads == 0, (

@@ -595,6 +595,35 @@ def num_floating_point_operations(args, batch_size):
                         * v_dim
                     )
                 )
+            elif args.experimental_attention_variant == "gated_delta_net2_pytorch":
+                # Calculate the FLOPs for the Gated DeltaNet-2 attention. This is an
+                # approximation for logging only; the implementation uses an external chunk kernel.
+                qk_head_dim = args.linear_key_head_dim
+                v_head_dim = args.linear_value_head_dim
+                num_qk_heads = args.linear_num_key_heads
+                num_v_heads = args.linear_num_value_heads
+                qk_dim = qk_head_dim * num_qk_heads
+                v_dim = v_head_dim * num_v_heads
+                linear_self_attn_term = (
+                    forward_backward_expansion_factor
+                    * fma_expansion_factor
+                    * (
+                        ## in proj: q, k, v, output gate, erase, write, decay
+                        args.hidden_size
+                        * (4 * qk_dim + 3 * v_dim)
+                        ## conv1d on q, k, v
+                        + args.linear_conv_kernel_dim
+                        * (2 * qk_dim + v_dim)
+                        ## channel-wise decay, erase/read, write, update, output
+                        + num_v_heads
+                        * qk_head_dim
+                        * v_head_dim
+                        * 5
+                        ## out proj
+                        + args.hidden_size
+                        * v_dim
+                    )
+                )
             elif args.experimental_attention_variant in (
                 "delta_net",
                 "delta_net_pytorch",
