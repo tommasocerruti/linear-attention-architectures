@@ -464,11 +464,15 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
         from megatron.core.ssm.cler_hidden_routing import make_cler_hidden_projection
 
         value_dim = self.config.linear_num_value_heads * self.config.linear_value_head_dim
+        # Capacity control (cler_hidden_self_transform): the projection consumes the layer's own
+        # hidden state (d_model), not the value-space write residual, so its input dim is hidden_size.
+        self_transform = getattr(self.config, "cler_hidden_self_transform", False)
+        proj_in_dim = self.config.hidden_size if self_transform else value_dim
         projs = torch.nn.ModuleDict()
         for idx, layer in enumerate(self.layers):
             if getattr(getattr(layer, "self_attention", None), "supports_cler", False):
                 projs[str(idx)] = make_cler_hidden_projection(
-                    value_dim=value_dim,
+                    value_dim=proj_in_dim,
                     hidden_size=self.config.hidden_size,
                     dtype=self.config.params_dtype,
                     device=torch.cuda.current_device(),
@@ -1119,11 +1123,20 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
 
                     # Add this GDN layer's projected write residual to the residual stream; it then
                     # persists to all later layers (and the final layernorm) via the residual path.
-                    emitted = getattr(layer, "cler_residual", None)
-                    if emitted is not None and str(l_no) in self.cler_hidden_proj:
-                        hidden_states = hidden_states + project_residual_to_hidden(
-                            self.cler_hidden_proj[str(l_no)], emitted
-                        )
+                    if getattr(self.config, "cler_hidden_self_transform", False):
+                        # CAPACITY CONTROL: same projection module + budget + injection point, but the
+                        # input is the layer's OWN hidden output (a learned low-rank self-transform
+                        # Q_l(h)) instead of the cross-layer write residual. No error content routed.
+                        if str(l_no) in self.cler_hidden_proj:
+                            hidden_states = hidden_states + self.cler_hidden_proj[str(l_no)](
+                                hidden_states
+                            )
+                    else:
+                        emitted = getattr(layer, "cler_residual", None)
+                        if emitted is not None and str(l_no) in self.cler_hidden_proj:
+                            hidden_states = hidden_states + project_residual_to_hidden(
+                                self.cler_hidden_proj[str(l_no)], emitted
+                            )
 
                     if (l_no + layer_offset) in extract_layer_indices:
                         intermediate_hidden_states.append(hidden_states)

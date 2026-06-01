@@ -346,6 +346,10 @@ if [ "${CLER_HIDDEN_ROUTING:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
     if [ -n "${CLER_HIDDEN_RANK:-}" ]; then
         CLER_ARGS+=(--cler-hidden-rank ${CLER_HIDDEN_RANK})
     fi
+    # Capacity control: route a self-transform of the hidden state (no cross-layer error content).
+    if [ "${CLER_HIDDEN_SELF_TRANSFORM:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-self-transform)
+    fi
 fi
 
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}

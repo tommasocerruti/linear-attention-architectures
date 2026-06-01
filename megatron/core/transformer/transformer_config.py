@@ -321,6 +321,15 @@ class TransformerConfig(ModelParallelConfig):
     """CLER-H projection rank. 0 = full dense Linear(value_dim -> d_model) (large); r>0 = a low-rank
     bottleneck Linear(value_dim -> r) -> Linear(r -> d_model), drastically fewer params."""
 
+    cler_hidden_self_transform: bool = False
+    """CLER-H CAPACITY CONTROL: instead of routing the GDN write residual, add a per-layer learned
+    low-rank self-transform Q_l(h) of the CURRENT hidden state back into the residual stream (same
+    zero-init projection module, same parameter budget, same injection location as CLER-H, but the
+    INPUT is the layer's own output rather than the cross-layer delta-rule error). This isolates
+    whether CLER-H's gain is the routed error content or merely extra residual-stream capacity:
+    if it matches CLER-H at the same rank the gain is capacity; if CLER-H beats it the error helps.
+    Projection input dim becomes hidden_size (not value_dim). Requires cler_hidden_routing."""
+
     attn_res_enabled: bool = False
     """Enable Full Attention Residuals (AttnRes): replace the fixed residual sum with a learned
     softmax attention over previous layer outputs (depth-wise), per Kimi/Moonshot AttnRes."""
@@ -1178,6 +1187,9 @@ class TransformerConfig(ModelParallelConfig):
                 raise ValueError("cler_hidden_routing is implemented for pipeline_model_parallel_size 1.")
             if self.tensor_model_parallel_size > 1:
                 raise ValueError("cler_hidden_routing is implemented for tensor_model_parallel_size 1.")
+
+        if getattr(self, "cler_hidden_self_transform", False) and not self.cler_hidden_routing:
+            raise ValueError("cler_hidden_self_transform requires cler_hidden_routing.")
 
         if self.attn_res_enabled:
             # AttnRes and CLER may be combined: AttnRes attends over the whole residual stream,
