@@ -330,6 +330,14 @@ class TransformerConfig(ModelParallelConfig):
     if it matches CLER-H at the same rank the gain is capacity; if CLER-H beats it the error helps.
     Projection input dim becomes hidden_size (not value_dim). Requires cler_hidden_routing."""
 
+    cler_hidden_route_value: bool = False
+    """CLER-H CONTROL (error vs representation): route the GDN's VALUE tensor v (the write content,
+    BEFORE the delta-rule subtracts the memory read) through the same projection into the hidden
+    stream, instead of the write residual r = v - Wφ(k). Value-space like the error, so it param-matches
+    CLER-H at the SAME rank. Tests whether CLER-H's gain is SPECIFICALLY the error or any value-space
+    GDN signal: if routing v helps as much as r, it is not the error specifically; if v is flat (like
+    the self-transform) while r helps, the gain is the error. Requires cler_hidden_routing."""
+
     attn_res_enabled: bool = False
     """Enable Full Attention Residuals (AttnRes): replace the fixed residual sum with a learned
     softmax attention over previous layer outputs (depth-wise), per Kimi/Moonshot AttnRes."""
@@ -1190,6 +1198,14 @@ class TransformerConfig(ModelParallelConfig):
 
         if getattr(self, "cler_hidden_self_transform", False) and not self.cler_hidden_routing:
             raise ValueError("cler_hidden_self_transform requires cler_hidden_routing.")
+
+        if getattr(self, "cler_hidden_route_value", False):
+            if not self.cler_hidden_routing:
+                raise ValueError("cler_hidden_route_value requires cler_hidden_routing.")
+            if getattr(self, "cler_hidden_self_transform", False):
+                raise ValueError(
+                    "cler_hidden_route_value and cler_hidden_self_transform are mutually exclusive."
+                )
 
         if self.attn_res_enabled:
             # AttnRes and CLER may be combined: AttnRes attends over the whole residual stream,

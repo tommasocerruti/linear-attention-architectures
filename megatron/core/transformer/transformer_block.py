@@ -1131,6 +1131,15 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                             hidden_states = hidden_states + self.cler_hidden_proj[str(l_no)](
                                 hidden_states
                             )
+                    elif getattr(self.config, "cler_hidden_route_value", False):
+                        # ERROR-vs-REPRESENTATION CONTROL: route the raw value v (value-space, same as
+                        # the error) instead of r = v - Wφ(k). Same projection module/budget; isolates
+                        # whether the gain is specifically the error or any value-space GDN signal.
+                        v = getattr(layer, "cler_value", None)
+                        if v is not None and str(l_no) in self.cler_hidden_proj:
+                            hidden_states = hidden_states + project_residual_to_hidden(
+                                self.cler_hidden_proj[str(l_no)], v
+                            )
                     else:
                         emitted = getattr(layer, "cler_residual", None)
                         if emitted is not None and str(l_no) in self.cler_hidden_proj:

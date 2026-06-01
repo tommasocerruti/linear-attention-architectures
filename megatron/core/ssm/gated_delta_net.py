@@ -221,6 +221,7 @@ class GatedDeltaNet(MegatronModule):
             self.gated_delta_rule = chunk_gated_delta_rule
         self.supports_cler = True
         self.cler_residual = None
+        self.cler_value = None  # raw value v, stashed for the cler_hidden_route_value control
         self.cler_gate = None
         self.cler_gate_activation = None
         self.cler_attn_query = None
@@ -343,6 +344,7 @@ class GatedDeltaNet(MegatronModule):
         cler_residual = kwargs.pop("cler_residual", None)
         del kwargs
         self.cler_residual = None
+        self.cler_value = None
         self.cler_gate_activation = None
 
         seq_len, batch, _ = hidden_states.shape
@@ -485,6 +487,11 @@ class GatedDeltaNet(MegatronModule):
                 config=self.config,
                 variant_name="GDN",
             )
+
+        # CLER-H control: stash the raw value v (write content, before the kernel's delta-rule
+        # subtracts the memory read) so it can be routed into the hidden stream instead of r = v - Wφ(k).
+        if getattr(self.config, "cler_hidden_route_value", False):
+            self.cler_value = value
 
         # Calculate g and beta
         nvtx_range_push(suffix="g_and_beta")

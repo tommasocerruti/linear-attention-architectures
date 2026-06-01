@@ -333,6 +333,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         )
         self.supports_cler = getattr(self.self_attention, "supports_cler", False)
         self.cler_residual = None
+        self.cler_value = None
 
         # [Module 3: BiasDropoutFusion]
         self.self_attn_bda = build_module(submodules.self_attn_bda)
@@ -617,6 +618,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
 
         # Self attention.
         self.cler_residual = None
+        self.cler_value = None
         self.supports_cler = getattr(self.self_attention, "supports_cler", False)
         self_attention_kwargs = {}
         if self.config.cler_enabled and self.supports_cler:
@@ -638,6 +640,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         )
         if self.config.cler_enabled and self.supports_cler:
             self.cler_residual = getattr(self.self_attention, "cler_residual", None)
+            self.cler_value = getattr(self.self_attention, "cler_value", None)
         nvtx_range_pop(suffix="self_attention")
 
         if self.recompute_input_layernorm:
