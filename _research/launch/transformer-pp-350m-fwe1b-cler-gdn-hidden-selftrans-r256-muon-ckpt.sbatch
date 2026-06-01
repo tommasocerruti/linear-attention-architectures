@@ -11,7 +11,7 @@
 #SBATCH --job-name=cler-hidden-selftrans-r256-350m
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
-#SBATCH --time=03:30:00
+#SBATCH --time=02:58:00
 #SBATCH --output=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --error=/iopsstor/scratch/cscs/%u/cler/_research/results/runs/%x-%j.log
 #SBATCH --nodes=1
@@ -51,7 +51,7 @@ export EXP_NAME=cler-gdn-hidden-selftrans-r256-350m-llama2-fwe1b-muon-ckpt
 export TRAIN_SAMPLES=244140
 export EVAL_INTERVAL=100
 export EVAL_ITERS=10
-export EXIT_DURATION_IN_MINS=200
+export EXIT_DURATION_IN_MINS=170
 export MBS=2
 export GBS=128
 export LINEAR_ATTENTION_FREQ=3
