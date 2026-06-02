@@ -42,6 +42,8 @@ _STATE: dict[str, Any] = {
     "cler_residual_log_announced": False,
     "cler_value_log_path": None,
     "cler_value_log_announced": False,
+    "cler_proj_log_path": None,
+    "cler_proj_log_announced": False,
 }
 
 
@@ -434,6 +436,83 @@ def _append_cler_residual_log(iteration: int) -> dict[str, Any]:
     return stats
 
 
+def _collect_cler_proj_stats(model: Any) -> dict[str, Any]:
+    """Effective norm of each CLER-H/V hidden projection P_l (the true 'gain' analog of the old
+    gamma). For low-rank P_l = up@down the effective matrix is composed first. Logged over training."""
+    import torch
+
+    chunks = model if isinstance(model, list) else [model]
+    groups: dict[str, list] = {}
+    for chunk in chunks:
+        for name, p in chunk.named_parameters():
+            if "cler_hidden_proj" not in name:
+                continue
+            idx = name.split("cler_hidden_proj.")[1].split(".")[0]
+            groups.setdefault(idx, []).append(p.detach())
+    if not groups:
+        return {}
+    layers: dict[str, float] = {}
+    vals: list[float] = []
+    with torch.no_grad():
+        for idx, mats in groups.items():
+            if len(mats) == 1:
+                W = mats[0].float()
+            else:
+                down = min(mats, key=lambda t: t.shape[0]).float()  # [r, in]
+                up = max(mats, key=lambda t: t.shape[0]).float()    # [out, r]
+                W = up @ down
+            n = float(torch.linalg.norm(W))
+            layers[idx] = n
+            vals.append(n)
+    return {
+        "count": len(vals),
+        "fro_mean": sum(vals) / len(vals),
+        "fro_min": min(vals),
+        "fro_max": max(vals),
+        "layers": layers,
+    }
+
+
+def _append_cler_proj_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    if os.environ.get("CLER_RESIDUAL_LOG_ENABLED", "1") == "0":
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_RESIDUAL_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_proj_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_proj_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_proj.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_proj_log_path"] = path
+
+    if not _STATE.get("cler_proj_log_announced"):
+        print(f"[cler] projection-norm log: {path}", flush=True)
+        _STATE["cler_proj_log_announced"] = True
+
+    payload = {"step": int(iteration), "wall": time.time(), **stats}
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
 def _append_cler_value_log(iteration: int) -> dict[str, Any]:
     if int(os.environ.get("RANK", "0")) != 0:
         return {}
@@ -782,6 +861,7 @@ def patch_training_log() -> None:
         if cler_gamma_stats:
             row["cler_gamma"] = cler_gamma_stats
         _append_cler_value_log(int(iteration))
+        _append_cler_proj_log(int(iteration))
         cler_residual_stats = _append_cler_residual_log(int(iteration))
         if cler_residual_stats:
             row["cler_residual"] = cler_residual_stats

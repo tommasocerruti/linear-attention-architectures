@@ -255,7 +255,8 @@ class GatedDeltaNet(MegatronModule):
                 value_head_dim=self.value_head_dim,
                 variant_name="GDN",
             )
-        elif self.config.cler_enabled:
+        elif self.config.cler_enabled and not self.config.cler_hidden_routing:
+            # Value-space CLER (original): static gamma mixes the routed residual into the value.
             self.cler_gamma = make_cler_gamma_parameter(
                 config=self.config,
                 num_value_heads_local_tp=self.num_v_heads_local_tp,
@@ -264,6 +265,8 @@ class GatedDeltaNet(MegatronModule):
                 variant_name="GDN",
             )
         else:
+            # CLER-H / CLER-V route via the hidden-space projection P_l (in the block), not gamma;
+            # and non-CLER. No gamma parameter is created (it would be a dead, always-zero param).
             self.register_parameter("cler_gamma", None)
 
         # Output layernorm before projection
@@ -480,7 +483,7 @@ class GatedDeltaNet(MegatronModule):
             self.cler_gate_activation = (
                 gate_activation.detach() if gate_activation is not None else None
             )
-        elif self.config.cler_enabled:
+        elif self.config.cler_enabled and not self.config.cler_hidden_routing:
             value = inject_cler_residual(
                 value=value,
                 cler_residual=cler_residual,
