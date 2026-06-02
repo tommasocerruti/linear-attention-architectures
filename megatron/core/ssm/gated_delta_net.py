@@ -6,6 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple, Union
 
@@ -527,6 +528,25 @@ class GatedDeltaNet(MegatronModule):
                 use_qk_l2norm_in_kernel=False,
             )
         nvtx_range_pop(suffix="gated_delta_rule")
+
+        # Optional magnitude probe: compare ||value v|| vs ||write residual r|| (env-gated, no-op by
+        # default). r = v - Wφ(k) is the unpredicted part, so typically ||r|| < ||v||; this quantifies
+        # the gap that motivates the CLER-V vs CLER-H magnitude question.
+        if os.environ.get("MEGATRON_CLER_LOG_MAG") == "1" and self.config.cler_enabled:
+            import torch.distributed as _dist
+            if (not _dist.is_initialized()) or _dist.get_rank() == 0:
+                with torch.no_grad():
+                    vn = value.float().norm(dim=-1).mean().item()
+                    rn = (
+                        self.cler_residual.float().norm(dim=-1).mean().item()
+                        if self.cler_residual is not None
+                        else float("nan")
+                    )
+                print(
+                    f"[CLER-MAG] layer={getattr(self, 'layer_number', -1)} "
+                    f"|v|={vn:.4f} |r|={rn:.4f} v/r={vn / max(rn, 1e-9):.3f}",
+                    flush=True,
+                )
 
         # RMSNorm
         nvtx_range_push(suffix="gated_norm")
