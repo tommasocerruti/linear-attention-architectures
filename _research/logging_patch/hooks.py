@@ -40,6 +40,8 @@ _STATE: dict[str, Any] = {
     "cler_gamma_log_announced": False,
     "cler_residual_log_path": None,
     "cler_residual_log_announced": False,
+    "cler_value_log_path": None,
+    "cler_value_log_announced": False,
 }
 
 
@@ -298,6 +300,30 @@ def _collect_cler_residual_stats(model: Any) -> dict[str, Any]:
     return payload
 
 
+def _collect_cler_value_stats(model: Any) -> dict[str, Any]:
+    """Summarize the GDN value tensor v (stashed as cler_value), parallel to the residual stats.
+    Lets us compare ||v|| vs ||r|| for CLER-V vs CLER-H runs (the magnitude question)."""
+    chunks = model if isinstance(model, list) else [model]
+    layers: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, module in chunk.named_modules():
+            if not name.endswith(".self_attention"):
+                continue
+            value = getattr(module, "cler_value", None)
+            if value is None:
+                continue
+            stats = _tensor_summary(value)
+            if stats:
+                layers[f"{name}.cler_value"] = stats
+    if not layers:
+        return {}
+    abs_means = [float(s["abs_mean"]) for s in layers.values() if "abs_mean" in s]
+    payload: dict[str, Any] = {"count": len(layers), "layers": layers}
+    if abs_means:
+        payload["abs_mean_mean"] = sum(abs_means) / len(abs_means)
+    return payload
+
+
 def _collect_cler_gate_stats(model: Any) -> dict[str, Any]:
     """Summarize the data-dependent CLER dynamic-gate activations sigmoid(Linear(value))."""
     chunks = model if isinstance(model, list) else [model]
@@ -402,6 +428,46 @@ def _append_cler_residual_log(iteration: int) -> dict[str, Any]:
         "wall": time.time(),
         **stats,
     }
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _append_cler_value_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    if os.environ.get("CLER_RESIDUAL_LOG_ENABLED", "1") == "0":
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_RESIDUAL_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_value_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_value_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_value.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_value_log_path"] = path
+
+    if not _STATE.get("cler_value_log_announced"):
+        print(f"[cler] value stats log: {path}", flush=True)
+        _STATE["cler_value_log_announced"] = True
+
+    payload = {"step": int(iteration), "wall": time.time(), **stats}
     with Path(path).open("a") as fh:
         fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
         fh.write("\n")
@@ -715,6 +781,7 @@ def patch_training_log() -> None:
         cler_gamma_stats = _append_cler_gamma_log(int(iteration))
         if cler_gamma_stats:
             row["cler_gamma"] = cler_gamma_stats
+        _append_cler_value_log(int(iteration))
         cler_residual_stats = _append_cler_residual_log(int(iteration))
         if cler_residual_stats:
             row["cler_residual"] = cler_residual_stats

@@ -354,6 +354,10 @@ if [ "${CLER_HIDDEN_ROUTING:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
     if [ "${CLER_HIDDEN_ROUTE_VALUE:-0}" = "1" ]; then
         CLER_ARGS+=(--cler-hidden-route-value)
     fi
+    # Magnitude control: RMS-normalize the routed signal to unit scale before the projection.
+    if [ "${CLER_HIDDEN_NORMALIZE_INPUT:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-normalize-input)
+    fi
 fi
 
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}

@@ -330,6 +330,12 @@ class TransformerConfig(ModelParallelConfig):
     if it matches CLER-H at the same rank the gain is capacity; if CLER-H beats it the error helps.
     Projection input dim becomes hidden_size (not value_dim). Requires cler_hidden_routing."""
 
+    cler_hidden_normalize_input: bool = False
+    """CLER-H magnitude control: RMS-normalize the routed signal (value v or residual r) to unit RMS
+    per token BEFORE the projection, so v and r enter at IDENTICAL magnitude. Disentangles whether
+    CLER-V's gain over CLER-H is the value CONTENT or just its larger magnitude: if normalized-v still
+    beats normalized-r it is content; if they tie it was magnitude. Requires cler_hidden_routing."""
+
     cler_hidden_route_value: bool = False
     """CLER-H CONTROL (error vs representation): route the GDN's VALUE tensor v (the write content,
     BEFORE the delta-rule subtracts the memory read) through the same projection into the hidden
@@ -1198,6 +1204,9 @@ class TransformerConfig(ModelParallelConfig):
 
         if getattr(self, "cler_hidden_self_transform", False) and not self.cler_hidden_routing:
             raise ValueError("cler_hidden_self_transform requires cler_hidden_routing.")
+
+        if getattr(self, "cler_hidden_normalize_input", False) and not self.cler_hidden_routing:
+            raise ValueError("cler_hidden_normalize_input requires cler_hidden_routing.")
 
         if getattr(self, "cler_hidden_route_value", False):
             if not self.cler_hidden_routing:

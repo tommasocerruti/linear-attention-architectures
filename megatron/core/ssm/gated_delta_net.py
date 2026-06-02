@@ -490,8 +490,9 @@ class GatedDeltaNet(MegatronModule):
             )
 
         # CLER-H control: stash the raw value v (write content, before the kernel's delta-rule
-        # subtracts the memory read) so it can be routed into the hidden stream instead of r = v - Wφ(k).
-        if getattr(self.config, "cler_hidden_route_value", False):
+        # subtracts the memory read) so it can be routed into the hidden stream instead of r = v - Wφ(k),
+        # and so the logger can record ||v|| alongside ||r|| for any CLER run.
+        if self.config.cler_enabled:
             self.cler_value = value
 
         # Calculate g and beta

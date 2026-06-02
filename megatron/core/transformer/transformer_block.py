@@ -1088,6 +1088,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 # so no value-target injection happens.
                 from megatron.core.ssm.cler_hidden_routing import project_residual_to_hidden
 
+                _cler_norm_in = getattr(self.config, "cler_hidden_normalize_input", False)
                 for l_no, layer in enumerate(self.layers):
                     if use_inner_quantization_context:
                         if self.config.fp8:
@@ -1138,13 +1139,13 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                         v = getattr(layer, "cler_value", None)
                         if v is not None and str(l_no) in self.cler_hidden_proj:
                             hidden_states = hidden_states + project_residual_to_hidden(
-                                self.cler_hidden_proj[str(l_no)], v
+                                self.cler_hidden_proj[str(l_no)], v, normalize=_cler_norm_in
                             )
                     else:
                         emitted = getattr(layer, "cler_residual", None)
                         if emitted is not None and str(l_no) in self.cler_hidden_proj:
                             hidden_states = hidden_states + project_residual_to_hidden(
-                                self.cler_hidden_proj[str(l_no)], emitted
+                                self.cler_hidden_proj[str(l_no)], emitted, normalize=_cler_norm_in
                             )
 
                     if (l_no + layer_offset) in extract_layer_indices:

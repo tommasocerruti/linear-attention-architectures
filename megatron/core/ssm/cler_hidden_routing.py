@@ -42,9 +42,19 @@ def make_cler_hidden_projection(
     return proj
 
 
-def project_residual_to_hidden(proj: nn.Linear, residual: Tensor) -> Tensor:
+def project_residual_to_hidden(
+    proj: nn.Linear, residual: Tensor, normalize: bool = False, eps: float = 1e-6
+) -> Tensor:
     """Map a write residual [batch, seq, value_heads, value_head_dim] to a hidden-stream
-    contribution [seq, batch, hidden] (sequence-first, matching the residual stream layout)."""
+    contribution [seq, batch, hidden] (sequence-first, matching the residual stream layout).
+
+    If ``normalize`` is set, the flattened per-token routed vector is RMS-normalized to unit RMS
+    before the projection (magnitude control: makes value v and residual r enter at identical scale)."""
     batch, seq = residual.shape[0], residual.shape[1]
-    eps = proj(residual.reshape(batch, seq, -1))  # [batch, seq, hidden]
-    return eps.transpose(0, 1).contiguous()  # [seq, batch, hidden]
+    x = residual.reshape(batch, seq, -1)  # [batch, seq, value_dim]
+    if normalize:
+        xf = x.float()
+        xf = xf * torch.rsqrt(xf.pow(2).mean(dim=-1, keepdim=True) + eps)
+        x = xf.to(residual.dtype)
+    out = proj(x)  # [batch, seq, hidden]
+    return out.transpose(0, 1).contiguous()  # [seq, batch, hidden]
