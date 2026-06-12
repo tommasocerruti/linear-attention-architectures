@@ -152,7 +152,10 @@ class DeltaNet(MegatronModule):
         self.delta_rule = chunk_delta_rule_with_residual if config.cler_enabled else chunk_delta_rule
         self.supports_cler = True
         self.cler_residual = None
-        if self.config.cler_enabled:
+        self.cler_value = None  # raw value v, stashed for the cler_hidden_route_value control
+        # Mirror gated_delta_net.py: with hidden routing the static gamma is never used (injection
+        # happens in the shared hidden stream), so do not allocate it (a dead param breaks DDP).
+        if self.config.cler_enabled and not getattr(self.config, "cler_hidden_routing", False):
             self.cler_gamma = make_cler_gamma_parameter(
                 config=self.config,
                 num_value_heads_local_tp=self.num_heads_local_tp,
@@ -208,6 +211,7 @@ class DeltaNet(MegatronModule):
         cler_residual = kwargs.pop("cler_residual", None)
         del kwargs
         self.cler_residual = None
+        self.cler_value = None
 
         seq_len, batch, _ = hidden_states.shape
         seq_len = seq_len * self.sp_size * self.cp_size
@@ -302,7 +306,7 @@ class DeltaNet(MegatronModule):
         query, key, value, beta = self._prepare_qkv_for_delta_rule(qkv, beta, batch, seq_len)
         nvtx_range_pop(suffix="prepare_qkv_for_delta_rule")
 
-        if self.config.cler_enabled:
+        if self.config.cler_enabled and not self.config.cler_hidden_routing:
             value = inject_cler_residual(
                 value=value,
                 cler_residual=cler_residual,
@@ -310,6 +314,11 @@ class DeltaNet(MegatronModule):
                 config=self.config,
                 variant_name="DeltaNet",
             )
+
+        # Mirror gated_delta_net.py: stash the raw value v (write content, before the kernel's
+        # delta-rule subtracts the memory read) for cler_hidden_route_value / magnitude logging.
+        if self.config.cler_enabled:
+            self.cler_value = value
 
         nvtx_range_push(suffix="delta_rule")
         if self.config.cler_enabled:

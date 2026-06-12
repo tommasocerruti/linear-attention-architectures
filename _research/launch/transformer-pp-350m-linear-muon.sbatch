@@ -358,9 +358,22 @@ if [ "${CLER_HIDDEN_ROUTING:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
     if [ "${CLER_HIDDEN_NORMALIZE_INPUT:-0}" = "1" ]; then
         CLER_ARGS+=(--cler-hidden-normalize-input)
     fi
+    # CLER-G: surprise-gated value routing (error as router, value as content).
+    if [ "${CLER_HIDDEN_GATE_BY_ERROR:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-gate-by-error)
+    fi
+    # CLER-RV: route [r ; v] jointly through one projection (2x input dim).
+    if [ "${CLER_HIDDEN_ROUTE_BOTH:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-route-both)
+    fi
 fi
 
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}
+# Multi-seed: SEED env controls --seed AND appends a distinct suffix to EXP_NAME (so SAVE_DIR + the
+# W&B run id are distinct per seed and a seed-43 run never resumes/overwrites the seed-42 checkpoint).
+if [ -n "${SEED:-}" ] && [ "${SEED}" != "42" ] && [[ "$EXP_NAME" != *-s${SEED} ]]; then
+    EXP_NAME=${EXP_NAME}-s${SEED}
+fi
 
 CHECKPOINT_ARGS=()
 if [ "${ENABLE_CHECKPOINTING:-0}" = "1" ]; then
@@ -374,6 +387,12 @@ if [ "${ENABLE_CHECKPOINTING:-0}" = "1" ]; then
         --save "$SAVE_DIR"
         --save-interval "$SAVE_INTERVAL"
     )
+    # Retention: deletes the previous checkpoint on each save unless its iter is a multiple of this.
+    # Set > total steps (and a multiple of save-interval) to keep ONLY the latest checkpoint -> minimal
+    # disk; the latest becomes the sole final checkpoint on completion.
+    if [ -n "${SAVE_RETAIN_INTERVAL:-}" ]; then
+        CHECKPOINT_ARGS+=(--save-retain-interval "$SAVE_RETAIN_INTERVAL")
+    fi
     if [ -n "${LOAD_DIR:-}" ]; then
         CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
     fi
@@ -481,7 +500,7 @@ LEARNING_RATE_ARGS=(
 )
 
 INITIALIZATION_ARGS=(
-    --seed 42
+    --seed ${SEED:-42}
     --init-method-std 0.02
 )
 
@@ -571,13 +590,23 @@ export WANDB_ATTN_RES_ENABLED=${ATTN_RES_ENABLED:-0}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
-    export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
-    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $SCRATCH_REPO_DIR/_research/results/runs --wandb-entity $WANDB_ENTITY"
+    # Single W&B run across resume chunks: a STABLE run id (from EXP_NAME) + resume=allow means every
+    # chained resume logs to the SAME run (one continuous 0->end curve) instead of a new split run per
+    # job id. Stable name too (no job id). Set WANDB_SINGLE_RUN=0 to revert to one run per job.
+    WANDB_EXP_NAME_EFF=$EXP_NAME
+    if [ "${WANDB_SINGLE_RUN:-1}" = "1" ] && [ "${WANDB_IS_SMOKE:-0}" != "1" ]; then
+        export WANDB_RUN_ID=$(printf '%s' "$EXP_NAME" | tr -c 'A-Za-z0-9_-' '-' | cut -c1-64)
+        export WANDB_RESUME=allow
+    else
+        WANDB_EXP_NAME_EFF=$EXP_NAME-$SLURM_JOB_ID
+    fi
+    export WANDB_NAME=$WANDB_EXP_NAME_EFF
+    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $WANDB_EXP_NAME_EFF --wandb-save-dir $SCRATCH_REPO_DIR/_research/results/runs --wandb-entity $WANDB_ENTITY"
 else
     export WANDB_MODE=disabled
 fi
 
-ENV_SETUP="export MASTER_ADDR=$MASTER_ADDR; \
+ENV_SETUP="ulimit -c 0; export MASTER_ADDR=$MASTER_ADDR; \
     export MASTER_PORT=$MASTER_PORT; \
     export RANK=\$SLURM_PROCID; \
     export WORLD_SIZE=\$SLURM_NTASKS; \

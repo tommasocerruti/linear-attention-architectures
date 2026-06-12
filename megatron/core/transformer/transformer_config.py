@@ -344,6 +344,21 @@ class TransformerConfig(ModelParallelConfig):
     GDN signal: if routing v helps as much as r, it is not the error specifically; if v is flat (like
     the self-transform) while r helps, the gain is the error. Requires cler_hidden_routing."""
 
+    cler_hidden_gate_by_error: bool = False
+    """CLER-G (surprise-gated value routing): route the VALUE v through P_l like cler_hidden_route_value,
+    but gated per (token, head) by the normalized SURPRISE s = ||r|| / (||v|| + eps) via a learned
+    per-layer affine sigmoid g = sigmoid(a*s + b) (a init 1, b init 0): eps_l = P_l(v * g). The
+    delta-rule ERROR acts as the ROUTER (where the memory failed -> route more), the value as the
+    CONTENT. Tests whether the error's useful information is its norm (a novelty signal) rather than
+    its direction. Requires cler_hidden_routing; mutually exclusive with other cler_hidden_* modes."""
+
+    cler_hidden_route_both: bool = False
+    """CLER-RV (joint routing): route the concatenation [r ; v] (write residual + value) through a
+    single zero-init projection P_l : R^{2*value_dim} -> R^{d_model}. Strictly generalizes CLER-V
+    (P can zero the r-block) at 2x the routing params per layer. Tests whether explicit access to the
+    error adds information beyond the value alone. Requires cler_hidden_routing; mutually exclusive
+    with other cler_hidden_* modes."""
+
     attn_res_enabled: bool = False
     """Enable Full Attention Residuals (AttnRes): replace the fixed residual sum with a learned
     softmax attention over previous layer outputs (depth-wise), per Kimi/Moonshot AttnRes."""
@@ -1215,6 +1230,20 @@ class TransformerConfig(ModelParallelConfig):
                 raise ValueError(
                     "cler_hidden_route_value and cler_hidden_self_transform are mutually exclusive."
                 )
+
+        _cler_hidden_modes = [
+            ("cler_hidden_self_transform", getattr(self, "cler_hidden_self_transform", False)),
+            ("cler_hidden_route_value", getattr(self, "cler_hidden_route_value", False)),
+            ("cler_hidden_gate_by_error", getattr(self, "cler_hidden_gate_by_error", False)),
+            ("cler_hidden_route_both", getattr(self, "cler_hidden_route_both", False)),
+        ]
+        _enabled_modes = [name for name, on in _cler_hidden_modes if on]
+        if _enabled_modes and not self.cler_hidden_routing:
+            raise ValueError(f"{_enabled_modes[0]} requires cler_hidden_routing.")
+        if len(_enabled_modes) > 1:
+            raise ValueError(
+                f"cler_hidden_* modes are mutually exclusive, got {_enabled_modes}."
+            )
 
         if self.attn_res_enabled:
             # AttnRes and CLER may be combined: AttnRes attends over the whole residual stream,
