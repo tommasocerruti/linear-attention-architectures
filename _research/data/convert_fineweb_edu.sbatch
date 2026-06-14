@@ -98,7 +98,7 @@ CONVERSION_CMD="set -euo pipefail; \
     PREPARE_STATUS=\$?; \
     set -e; \
     if [ \$PREPARE_STATUS -ne 0 ]; then \
-        python3 -c 'import json, pathlib, sys; manifest = pathlib.Path(sys.argv[1]); data = json.loads(manifest.read_text()) if manifest.exists() else {}; sys.exit(0 if data.get(\"status\") == \"complete\" else 1)' ${FINEWEB_EDU_JSONL}.manifest.json || exit \$PREPARE_STATUS; \
+        python3 -c 'import json, pathlib, sys; manifest = pathlib.Path(sys.argv[1]); data = json.loads(manifest.read_text()) if manifest.exists() else {}; sys.exit(0 if data.get(\\\"status\\\") == \\\"complete\\\" else 1)' ${FINEWEB_EDU_JSONL}.manifest.json || exit \$PREPARE_STATUS; \
         echo 'prepare_fineweb_edu.py exited non-zero after writing a complete manifest; continuing to preprocessing.'; \
     fi; \
     python3 $WORKDIR/tools/preprocess_data.py \

@@ -150,3 +150,59 @@ def test_completions_endpoint_supports_lm_eval_loglikelihood(
     assert sum(suffix_logprob) == 0, f"{suffix_logprob} != [0, .... 0]"
 
     mock_send_do_generate.assert_called_once()
+
+
+@unittest.mock.patch(
+    "megatron.core.inference.text_generation_server.endpoints.completions.send_do_generate"
+)
+def test_completions_endpoint_lm_eval_slice_excludes_context(
+    mock_send_do_generate, client, static_inference_engine, gpt2_tiktoken_tokenizer
+):
+    Utils.initialize_distributed()
+
+    context = "twinkle twinkle little star,"
+    continuation = " how I wonder what you are"
+    request_data = {"prompt": context + continuation, "max_tokens": 1, "logprobs": 1, "echo": True}
+
+    original_forward = static_inference_engine.controller.inference_wrapped_model.model.forward
+    context_token_count = len(gpt2_tiktoken_tokenizer.tokenize(context))
+    full_token_count = len(gpt2_tiktoken_tokenizer.tokenize(context + continuation))
+    continuation_token_count = full_token_count - context_token_count
+
+    def mock_forward(*args, **kwargs):
+        tokens = args[0]
+        batch_size, sequence_length = tokens.shape
+        assert batch_size == 1, "Test assumes batch_size == 1"
+        vocab_size = gpt2_tiktoken_tokenizer.vocab_size
+        logits = torch.zeros(
+            1, sequence_length, vocab_size, dtype=torch.float32, device=tokens.device
+        )
+
+        # Make context-token logprobs bad and continuation-token logprobs good.
+        for position, next_token in enumerate(tokens[0, 1:].tolist()):
+            if context_token_count - 1 <= position < full_token_count - 1:
+                logits[0, position, next_token] = 100
+        logits[0, -1, gpt2_tiktoken_tokenizer.eos] = 100
+        return logits
+
+    static_inference_engine.controller.inference_wrapped_model.model.forward = mock_forward
+    try:
+        response = client.post('/completions', json=request_data)
+    finally:
+        static_inference_engine.controller.inference_wrapped_model.model.forward = original_forward
+
+    assert response.status_code == 200
+    assert response.is_json
+
+    json_data = response.get_json()
+    logprobs = json_data["choices"][0]["logprobs"]
+    reconstructed_context_tokens = np.searchsorted(logprobs["text_offset"], len(context))
+
+    assert reconstructed_context_tokens == context_token_count
+    assert logprobs["token_logprobs"][context_token_count - 1] < -1
+
+    suffix_logprob = logprobs["token_logprobs"][reconstructed_context_tokens:-1]
+    assert len(suffix_logprob) == continuation_token_count
+    assert sum(suffix_logprob) == 0, f"{suffix_logprob} != [0, .... 0]"
+
+    mock_send_do_generate.assert_called_once()

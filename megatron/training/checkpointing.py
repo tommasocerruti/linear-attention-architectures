@@ -1519,6 +1519,17 @@ def load_args_from_checkpoint(
     _set_arg('attention_dropout', force=True)
     _set_arg('hidden_dropout', force=True)
 
+    # Local experimental attention variants are architecture-defining and must
+    # follow native checkpoints during eval/inference.
+    _set_arg('experimental_attention_variant', force=True)
+    _set_arg('linear_attention_freq', force=True)
+    _set_arg('linear_conv_kernel_dim', force=True)
+    _set_arg('linear_key_head_dim', force=True)
+    _set_arg('linear_value_head_dim', force=True)
+    _set_arg('linear_num_key_heads', force=True)
+    _set_arg('linear_num_value_heads', force=True)
+    _set_arg('attention_output_gate', force=True)
+
     # Legacy MTP pattern for old checkpoints
     _set_arg('mtp_hybrid_override_pattern', force=True)
     _set_arg('mtp_num_layers', force=True)

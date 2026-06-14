@@ -99,6 +99,27 @@ def get_gated_delta_net_module_spec(
     return attention
 
 
+def get_gated_delta_net_2_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for GatedDeltaNet2 attention."""
+
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
+    rms_norm = config.normalization == "RMSNorm"
+    attention = ModuleSpec(
+        module=GatedDeltaNet2,
+        submodules=GatedDeltaNet2Submodules(
+            in_proj=backend.column_parallel_layer_norm_linear(),
+            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": True},
+    )
+    return attention
+
+
 def get_gated_delta_net_pytorch_module_spec(
     config: TransformerConfig, backend: BackendSpecProvider = None
 ) -> ModuleSpec:
@@ -316,6 +337,8 @@ def get_experimental_attention_variant_module_spec(
         return get_gated_delta_net2_pytorch_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "gated_delta_net":
         return get_gated_delta_net_module_spec(config=config, backend=backend)
+    elif config.experimental_attention_variant == "gated_delta_net_2":
+        return get_gated_delta_net_2_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net":
         return get_delta_net_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net_pytorch":
