@@ -11,14 +11,19 @@
 # Optional exports:
 #   RUN_NAME=<results directory name>
 #   TASKS=hellaswag,piqa,winogrande
+#   TASKS=hellaswag;piqa;winogrande  # equivalent, avoids Slurm --export comma splitting
 #   PORT=5000
 #   COORD_PORT=5001
 #   SERVER_HOST=127.0.0.1
 #   LIMIT=10
+#   LM_EVAL_INCLUDE_PATH=/path/to/custom/lm_eval/tasks
+#   LM_EVAL_EXTRA_ARGS="--show_config"
+#   LM_EVAL_MAX_LENGTH=4096
 #   CONDA_ENV_NAME=<host-side conda env for lm_eval>
 #   CONDA_SH=~/miniconda3/etc/profile.d/conda.sh
-#   SERVER_IMPL=dynamic|static
+#   SERVER_IMPL=dynamic|static|scoring
 #   SERVER_EXTRA_ARGS="..."
+#   LM_EVAL_BATCH_SIZE=8
 #   READY_MAX_TRIES=36
 #   READY_SLEEP_SECONDS=5
 #   LM_EVAL_REMOTE_TOKENIZER_DELAY_SECONDS=0.005
@@ -63,14 +68,19 @@ OUT_ROOT=$REPO_DIR/_research/results/eval
 
 RUN_NAME=${RUN_NAME:-$(basename "$CKPT")}
 TASKS=${TASKS:-hellaswag,piqa,winogrande}
+TASKS=${TASKS//;/,}
 PORT=${PORT:-5000}
 COORD_PORT=${COORD_PORT:-5001}
 SERVER_HOST=${SERVER_HOST:-127.0.0.1}
 LIMIT=${LIMIT:-}
+LM_EVAL_INCLUDE_PATH=${LM_EVAL_INCLUDE_PATH:-}
+LM_EVAL_EXTRA_ARGS=${LM_EVAL_EXTRA_ARGS:-}
+LM_EVAL_MAX_LENGTH=${LM_EVAL_MAX_LENGTH:-}
 CONDA_ENV_NAME=${CONDA_ENV_NAME:-}
 CONDA_SH=${CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}
 SERVER_IMPL=${SERVER_IMPL:-dynamic}
 SERVER_EXTRA_ARGS=${SERVER_EXTRA_ARGS:-}
+LM_EVAL_BATCH_SIZE=${LM_EVAL_BATCH_SIZE:-}
 READY_MAX_TRIES=${READY_MAX_TRIES:-120}
 READY_SLEEP_SECONDS=${READY_SLEEP_SECONDS:-5}
 LM_EVAL_REMOTE_TOKENIZER_DELAY_SECONDS=${LM_EVAL_REMOTE_TOKENIZER_DELAY_SECONDS:-0.005}
@@ -138,6 +148,14 @@ fi
 MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)
 MASTER_PORT=${MASTER_PORT:-25679}
 
+if [ -z "$LM_EVAL_BATCH_SIZE" ]; then
+    if [ "$SERVER_IMPL" = "scoring" ]; then
+        LM_EVAL_BATCH_SIZE=1
+    else
+        LM_EVAL_BATCH_SIZE=8
+    fi
+fi
+
 ENV_SETUP="export MASTER_ADDR=$MASTER_ADDR; \
     export MASTER_PORT=$MASTER_PORT; \
     export RANK=\$SLURM_PROCID; \
@@ -165,7 +183,7 @@ if [ "$SERVER_IMPL" = "dynamic" ]; then
             --inference-max-seq-length 4096 \
             --inference-dynamic-batching-max-requests 64 \
             $SERVER_EXTRA_ARGS"
-else
+elif [ "$SERVER_IMPL" = "static" ]; then
     SERVER_CMD="bash $WORKDIR/_research/launch/install_python_deps.sh $PACKAGE_DIR && \
         if ! PYTHONPATH=$SERVER_PYTHONPATH python3 -c 'import flask, flask_restful, tqdm' >/dev/null 2>&1; then \
             python3 -m pip install --quiet --target=$PACKAGE_DIR flask flask-restful tqdm; \
@@ -181,6 +199,25 @@ else
             --inference-max-requests 64 \
             --inference-max-seq-length 4096 \
             $SERVER_EXTRA_ARGS"
+elif [ "$SERVER_IMPL" = "scoring" ]; then
+    SERVER_CMD="bash $WORKDIR/_research/launch/install_python_deps_eval.sh $PACKAGE_DIR && \
+        if ! PYTHONPATH=$SERVER_PYTHONPATH python3 -c 'import flask' >/dev/null 2>&1; then \
+            python3 -m pip install --quiet --target=$PACKAGE_DIR flask; \
+        fi && \
+        python3 $WORKDIR/tools/run_loglikelihood_scoring_server.py \
+            --use-checkpoint-args \
+            --load $CKPT \
+            --bf16 \
+            --no-load-optim \
+            --no-load-rng \
+            --port $PORT \
+            --host $SERVER_HOST \
+            --inference-max-seq-length 4096 \
+            --scoring-max-seq-length 4096 \
+            $SERVER_EXTRA_ARGS"
+else
+    echo "Unknown SERVER_IMPL=$SERVER_IMPL; expected dynamic, static, or scoring." >&2
+    exit 1
 fi
 
 cleanup() {
@@ -196,11 +233,16 @@ srun -lu --mpi=pmix --network=disable_rdzv_get --environment=$WORKDIR/_research/
     bash -c "$ENV_SETUP; $SERVER_CMD" > "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
+READY_PAYLOAD='{"prompt":"Hello","max_tokens":1}'
+if [ "$SERVER_IMPL" = "scoring" ]; then
+    READY_PAYLOAD='{"prompt":"Hello","max_tokens":1,"echo":true,"logprobs":1}'
+fi
+
 READY=0
 for _ in $(seq 1 "$READY_MAX_TRIES"); do
     if curl -sf -X POST "http://$SERVER_HOST:$PORT/v1/completions" \
         -H 'Content-Type: application/json' \
-        -d '{"prompt":"Hello","max_tokens":1}' >/dev/null; then
+        -d "$READY_PAYLOAD" >/dev/null; then
         READY=1
         break
     fi
@@ -216,12 +258,17 @@ if [ "$READY" != "1" ]; then
     exit 1
 fi
 
+LM_EVAL_MODEL_ARGS="model=cler,base_url=http://$SERVER_HOST:$PORT/v1/completions,num_concurrent=1,max_retries=3,tokenized_requests=False"
+if [ -n "$LM_EVAL_MAX_LENGTH" ]; then
+    LM_EVAL_MODEL_ARGS="$LM_EVAL_MODEL_ARGS,max_length=$LM_EVAL_MAX_LENGTH"
+fi
+
 if [ -n "$CONDA_ENV_NAME" ]; then
     LM_EVAL_ARGS=(
         python -m lm_eval
         --model local-completions
-        --model_args "model=cler,base_url=http://$SERVER_HOST:$PORT/v1/completions,num_concurrent=1,max_retries=3,tokenized_requests=False"
-        --batch_size 8
+        --model_args "$LM_EVAL_MODEL_ARGS"
+        --batch_size "$LM_EVAL_BATCH_SIZE"
         --tasks "$TASKS"
         --output_path "$OUTDIR"
         --log_samples
@@ -230,8 +277,8 @@ else
     LM_EVAL_ARGS=(
         python3 -m lm_eval
         --model local-completions
-        --model_args "model=cler,base_url=http://$SERVER_HOST:$PORT/v1/completions,num_concurrent=1,max_retries=3,tokenized_requests=False"
-        --batch_size 8
+        --model_args "$LM_EVAL_MODEL_ARGS"
+        --batch_size "$LM_EVAL_BATCH_SIZE"
         --tasks "$TASKS"
         --output_path "$OUTDIR"
         --log_samples
@@ -240,6 +287,15 @@ fi
 
 if [ -n "$LIMIT" ]; then
     LM_EVAL_ARGS+=(--limit "$LIMIT")
+fi
+
+if [ -n "$LM_EVAL_INCLUDE_PATH" ]; then
+    LM_EVAL_ARGS+=(--include_path "$LM_EVAL_INCLUDE_PATH")
+fi
+
+if [ -n "$LM_EVAL_EXTRA_ARGS" ]; then
+    read -r -a LM_EVAL_EXTRA_ARGS_ARRAY <<< "$LM_EVAL_EXTRA_ARGS"
+    LM_EVAL_ARGS+=("${LM_EVAL_EXTRA_ARGS_ARRAY[@]}")
 fi
 
 run_in_eval_env "${LM_EVAL_ARGS[@]}"
