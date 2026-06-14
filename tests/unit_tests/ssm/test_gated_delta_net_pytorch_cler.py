@@ -55,6 +55,20 @@ def _assert_raises(expected_exception, fn, *args, contains=None, **kwargs):
     raise AssertionError(f"Expected {expected_exception.__name__} to be raised")
 
 
+class _ClerBlockStub:
+    def __init__(self, enabled=True, routing_mode="latest"):
+        self.config = SimpleNamespace(
+            cler_enabled=enabled, cler_routing_mode=routing_mode
+        )
+
+    def _initial_cler_state(self):
+        return TransformerBlock._initial_cler_state(self)
+
+
+def _make_cler_block(enabled=True, routing_mode="latest"):
+    return _ClerBlockStub(enabled=enabled, routing_mode=routing_mode)
+
+
 def test_torch_chunk_gated_delta_rule_default_returns_two_outputs():
     query, key, value, g, beta = _make_rule_inputs(seq_len=2)
 
@@ -168,36 +182,66 @@ def test_cler_accepts_fast_gated_delta_net_variant():
 
 
 def test_cler_residual_carries_across_non_cler_layers():
-    block = SimpleNamespace(config=SimpleNamespace(cler_enabled=True))
+    block = _make_cler_block()
     residual = torch.tensor([1.0])
     non_cler_layer = SimpleNamespace(supports_cler=False)
+    initial_state = TransformerBlock._initial_cler_state(block)
+    carried_state = (residual, initial_state[1], initial_state[2], initial_state[3])
 
-    next_residual = TransformerBlock._get_next_cler_residual(
-        block, non_cler_layer, residual
+    next_state = TransformerBlock._update_cler_state(
+        block, non_cler_layer, carried_state
     )
 
-    assert next_residual is residual
+    assert next_state is carried_state
+    assert (
+        TransformerBlock._get_routed_cler_residual(
+            block, non_cler_layer, local_layer_index=1, cler_state=next_state
+        )
+        is residual
+    )
 
 
 def test_cler_layer_replaces_carried_residual():
-    block = SimpleNamespace(config=SimpleNamespace(cler_enabled=True))
+    block = _make_cler_block()
     previous_residual = torch.tensor([1.0])
     produced_residual = torch.tensor([2.0])
     cler_layer = SimpleNamespace(supports_cler=True, cler_residual=produced_residual)
-
-    next_residual = TransformerBlock._get_next_cler_residual(
-        block, cler_layer, previous_residual
+    initial_state = TransformerBlock._initial_cler_state(block)
+    carried_state = (
+        previous_residual,
+        initial_state[1],
+        initial_state[2],
+        initial_state[3],
     )
 
-    assert next_residual is produced_residual
+    next_state = TransformerBlock._update_cler_state(block, cler_layer, carried_state)
+
+    assert next_state[0] is produced_residual
+    assert next_state[1:] == initial_state[1:]
+    assert (
+        TransformerBlock._get_routed_cler_residual(
+            block, cler_layer, local_layer_index=1, cler_state=next_state
+        )
+        is produced_residual
+    )
 
 
 def test_cler_residual_is_cleared_when_cler_disabled():
-    block = SimpleNamespace(config=SimpleNamespace(cler_enabled=False))
+    block = _make_cler_block(enabled=False)
     residual = torch.tensor([1.0])
     non_cler_layer = SimpleNamespace(supports_cler=False)
+    carried_state = (residual, residual, 1, (residual,))
 
-    assert TransformerBlock._get_next_cler_residual(block, non_cler_layer, residual) is None
+    assert (
+        TransformerBlock._get_routed_cler_residual(
+            block, non_cler_layer, local_layer_index=1, cler_state=carried_state
+        )
+        is None
+    )
+    assert (
+        TransformerBlock._update_cler_state(block, non_cler_layer, carried_state)
+        == TransformerBlock._initial_cler_state(block)
+    )
 
 
 def _run_directly():

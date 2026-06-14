@@ -23,7 +23,6 @@ from megatron.core.ssm.gated_delta_net2_pytorch import (
 from megatron.core.ssm.gated_delta_net2_pytorch import (
     GatedDeltaNet2Submodules as GatedDeltaNet2PyTorchSubmodules,
 )
-from megatron.core.ssm.gated_delta_net_pytorch import GatedDeltaNet as GatedDeltaNetPyTorch
 from megatron.core.ssm.kda import KimiDeltaAttention, KimiDeltaAttentionSubmodules
 from megatron.core.ssm.linear_transformer_pytorch import (
     LinearTransformer as LinearTransformerPyTorch,
