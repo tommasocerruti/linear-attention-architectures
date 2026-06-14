@@ -3,10 +3,13 @@
 # Shared 350M Linear-RNN Muon launcher for FineWeb-Edu/LLaMA-2 runs.
 # Select the architecture with LINEAR_VARIANT:
 #   gdn_pytorch  - PyTorch Gated DeltaNet baseline, CLER off
+#   gdn_triton   - Triton/FLA Gated DeltaNet baseline, CLER off
 #   cler         - CLER v1 on PyTorch Gated DeltaNet
+#   cler_gdn_triton - CLER v1 on Triton/FLA Gated DeltaNet
 #   deltanet     - DeltaNet baseline
 #   deltanet_pytorch - pure PyTorch DeltaNet baseline
 #   cler_deltanet_pytorch - CLER v1 on pure PyTorch DeltaNet
+#   cler_deltanet_triton - CLER v1 on Triton/FLA DeltaNet
 #   linear_transformer_pytorch - pure additive linear-transformer baseline
 #
 # Required environment:
@@ -55,7 +58,7 @@ if [ ! -f "$REPO_ROOT/pretrain_gpt.py" ]; then
 fi
 WORKDIR=$REPO_ROOT
 SCRATCH_REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-PACKAGE_DIR=$SCRATCH_REPO_DIR/_research/packages
+PACKAGE_DIR=${PACKAGE_DIR:-$SCRATCH_REPO_DIR/_research/packages}
 DATASET_CACHE_DIR=$SCRATCH_REPO_DIR/cache/dataset
 TMP_CACHE_DIR=$SCRATCH_REPO_DIR/cache/tmp
 
@@ -117,12 +120,34 @@ GIT_SHA=$(git -C "$WORKDIR" rev-parse --short HEAD 2>/dev/null || echo unknown)
 
 LINEAR_ARGS=()
 CLER_ARGS=()
+# Full Attention Residuals (AttnRes) passthrough, independent of the mixer variant.
+ATTN_RES_ARGS=()
+if [ "${ATTN_RES_ENABLED:-0}" = "1" ]; then
+    ATTN_RES_ARGS=(--attn-res-enabled)
+fi
 WANDB_ARCH_DEFAULT=
 APERTUS_FEATURE_DEFAULT=
 APERTUS_TRACK_DEFAULT=
 EXP_NAME_DEFAULT=
 
 case "$LINEAR_VARIANT" in
+    gdn_triton)
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        LINEAR_ARGS=(
+            --experimental-attention-variant gated_delta_net
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
+            --attention-output-gate
+        )
+        WANDB_ARCH_DEFAULT=gdn-triton
+        APERTUS_FEATURE_DEFAULT=gdn-triton-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-gdn-triton-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-gdn-triton-muon-$GIT_SHA
+        ;;
     gdn_pytorch)
         LINEAR_ARGS=(
             --experimental-attention-variant gated_delta_net_pytorch
@@ -155,6 +180,7 @@ case "$LINEAR_VARIANT" in
             --cler-enabled
             --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
             --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
             --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
         )
         if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -167,6 +193,37 @@ case "$LINEAR_VARIANT" in
         APERTUS_FEATURE_DEFAULT=cler-v1-gdn-pytorch-muon
         APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-v1-muon
         EXP_NAME_DEFAULT=transformer-pp-350m-cler-v1-muon-$GIT_SHA
+        ;;
+    cler_gdn_triton)
+        export CLER_ENABLED=1
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        LINEAR_ARGS=(
+            --experimental-attention-variant gated_delta_net
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-64}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
+            --attention-output-gate
+        )
+        CLER_ARGS=(
+            --cler-enabled
+            --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+            --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
+            --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
+        )
+        if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-detach-residual)
+        fi
+        if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-normalize-residual)
+        fi
+        WANDB_ARCH_DEFAULT=cler-v1-gdn-triton
+        APERTUS_FEATURE_DEFAULT=cler-v1-gdn-triton-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-gdn-triton-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-cler-gdn-triton-muon-$GIT_SHA
         ;;
     deltanet)
         LINEAR_ARGS=(
@@ -213,6 +270,7 @@ case "$LINEAR_VARIANT" in
             --cler-enabled
             --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
             --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
             --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
         )
         if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -225,6 +283,36 @@ case "$LINEAR_VARIANT" in
         APERTUS_FEATURE_DEFAULT=cler-v1-deltanet-pytorch-muon
         APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon
         EXP_NAME_DEFAULT=transformer-pp-350m-cler-deltanet-pytorch-muon-$GIT_SHA
+        ;;
+    cler_deltanet_triton)
+        export CLER_ENABLED=1
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        LINEAR_ARGS=(
+            --experimental-attention-variant delta_net
+            --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
+            --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
+            --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
+            --linear-value-head-dim ${LINEAR_VALUE_HEAD_DIM:-128}
+            --linear-num-key-heads ${LINEAR_NUM_KEY_HEADS:-4}
+            --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-4}
+        )
+        CLER_ARGS=(
+            --cler-enabled
+            --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+            --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+            --cler-routing-mode ${CLER_ROUTING_MODE:-latest}
+            --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
+        )
+        if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-detach-residual)
+        fi
+        if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+            CLER_ARGS+=(--cler-normalize-residual)
+        fi
+        WANDB_ARCH_DEFAULT=cler-v1-deltanet-triton
+        APERTUS_FEATURE_DEFAULT=cler-v1-deltanet-triton-muon
+        APERTUS_TRACK_DEFAULT=transformer-pp-350m-cler-deltanet-triton-muon
+        EXP_NAME_DEFAULT=transformer-pp-350m-cler-deltanet-triton-muon-$GIT_SHA
         ;;
     linear_transformer_pytorch)
         LINEAR_ARGS=(
@@ -242,12 +330,82 @@ case "$LINEAR_VARIANT" in
         EXP_NAME_DEFAULT=transformer-pp-350m-linear-transformer-pytorch-muon-$GIT_SHA
         ;;
     *)
-        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_pytorch, cler, deltanet, deltanet_pytorch, cler_deltanet_pytorch, or linear_transformer_pytorch)" >&2
+        echo "ERROR: unknown LINEAR_VARIANT='$LINEAR_VARIANT' (expected gdn_triton, gdn_pytorch, cler, cler_gdn_triton, deltanet, deltanet_pytorch, cler_deltanet_pytorch, cler_deltanet_triton, or linear_transformer_pytorch)" >&2
         exit 1
         ;;
 esac
 
+# Optional data-dependent CLER receiver gate (replaces static gamma), any CLER variant.
+if [ "${CLER_DYNAMIC_GATE:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
+    CLER_ARGS+=(--cler-dynamic-gate)
+fi
+
+# CLER-H: route the write residual into the shared hidden stream (not the value target).
+if [ "${CLER_HIDDEN_ROUTING:-0}" = "1" ] && [ "${CLER_ENABLED:-0}" = "1" ]; then
+    CLER_ARGS+=(--cler-hidden-routing)
+    if [ -n "${CLER_HIDDEN_RANK:-}" ]; then
+        CLER_ARGS+=(--cler-hidden-rank ${CLER_HIDDEN_RANK})
+    fi
+    # Capacity control: route a self-transform of the hidden state (no cross-layer error content).
+    if [ "${CLER_HIDDEN_SELF_TRANSFORM:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-self-transform)
+    fi
+    # Control: route the raw value v instead of the write residual (error vs representation).
+    if [ "${CLER_HIDDEN_ROUTE_VALUE:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-route-value)
+    fi
+    # Magnitude control: RMS-normalize the routed signal to unit scale before the projection.
+    if [ "${CLER_HIDDEN_NORMALIZE_INPUT:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-normalize-input)
+    fi
+    # CLER-G: surprise-gated value routing (error as router, value as content).
+    if [ "${CLER_HIDDEN_GATE_BY_ERROR:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-gate-by-error)
+    fi
+    # CLER-RV: route [r ; v] jointly through one projection (2x input dim).
+    if [ "${CLER_HIDDEN_ROUTE_BOTH:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-hidden-route-both)
+    fi
+fi
+
 EXP_NAME=${EXP_NAME:-$EXP_NAME_DEFAULT}
+# Multi-seed: SEED env controls --seed AND appends a distinct suffix to EXP_NAME (so SAVE_DIR + the
+# W&B run id are distinct per seed and a seed-43 run never resumes/overwrites the seed-42 checkpoint).
+if [ -n "${SEED:-}" ] && [ "${SEED}" != "42" ] && [[ "$EXP_NAME" != *-s${SEED} ]]; then
+    EXP_NAME=${EXP_NAME}-s${SEED}
+fi
+
+CHECKPOINT_ARGS=()
+if [ "${ENABLE_CHECKPOINTING:-0}" = "1" ]; then
+    SAVE_DIR=${SAVE_DIR:-$SCRATCH_REPO_DIR/_research/results/checkpoints/$EXP_NAME-$SLURM_JOB_ID}
+    SAVE_INTERVAL=${SAVE_INTERVAL:-500}
+    CKPT_FORMAT=${CKPT_FORMAT:-torch}
+    NO_SAVE_OPTIM=${NO_SAVE_OPTIM:-0}
+    NO_SAVE_RNG=${NO_SAVE_RNG:-0}
+    mkdir -p "$SAVE_DIR"
+    CHECKPOINT_ARGS=(
+        --save "$SAVE_DIR"
+        --save-interval "$SAVE_INTERVAL"
+    )
+    # Retention: deletes the previous checkpoint on each save unless its iter is a multiple of this.
+    # Set > total steps (and a multiple of save-interval) to keep ONLY the latest checkpoint -> minimal
+    # disk; the latest becomes the sole final checkpoint on completion.
+    if [ -n "${SAVE_RETAIN_INTERVAL:-}" ]; then
+        CHECKPOINT_ARGS+=(--save-retain-interval "$SAVE_RETAIN_INTERVAL")
+    fi
+    if [ -n "${LOAD_DIR:-}" ]; then
+        CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
+    fi
+    if [ -n "$CKPT_FORMAT" ]; then
+        CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
+    fi
+    if [ "$NO_SAVE_OPTIM" = "1" ]; then
+        CHECKPOINT_ARGS+=(--no-save-optim)
+    fi
+    if [ "$NO_SAVE_RNG" = "1" ]; then
+        CHECKPOINT_ARGS+=(--no-save-rng)
+    fi
+fi
 
 if [ -n "$TRAIN_ITERS" ]; then
     TRAIN_STOP_ARGS=(--train-iters $TRAIN_ITERS)
@@ -342,7 +500,7 @@ LEARNING_RATE_ARGS=(
 )
 
 INITIALIZATION_ARGS=(
-    --seed 42
+    --seed ${SEED:-42}
     --init-method-std 0.02
 )
 
@@ -396,6 +554,7 @@ MEGATRON_ARGS="\
     ${NETWORK_SIZE_ARGS[@]} \
     ${LINEAR_ARGS[@]} \
     ${CLER_ARGS[@]+"${CLER_ARGS[@]}"} \
+    ${ATTN_RES_ARGS[@]+"${ATTN_RES_ARGS[@]}"} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${MUON_ARGS[@]} \
@@ -404,6 +563,7 @@ MEGATRON_ARGS="\
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
     ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
+    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
@@ -420,19 +580,33 @@ export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
 export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
 export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
 export WANDB_CLER_GAMMA_MODE=${CLER_GAMMA_MODE:-scalar}
+export WANDB_CLER_ROUTING_MODE=${CLER_ROUTING_MODE:-latest}
 export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
 export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
 export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
+export WANDB_CLER_DYNAMIC_GATE=${CLER_DYNAMIC_GATE:-0}
+export WANDB_CLER_HIDDEN_ROUTING=${CLER_HIDDEN_ROUTING:-0}
+export WANDB_ATTN_RES_ENABLED=${ATTN_RES_ENABLED:-0}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
-    export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
-    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $SCRATCH_REPO_DIR/_research/results/runs --wandb-entity $WANDB_ENTITY"
+    # Single W&B run across resume chunks: a STABLE run id (from EXP_NAME) + resume=allow means every
+    # chained resume logs to the SAME run (one continuous 0->end curve) instead of a new split run per
+    # job id. Stable name too (no job id). Set WANDB_SINGLE_RUN=0 to revert to one run per job.
+    WANDB_EXP_NAME_EFF=$EXP_NAME
+    if [ "${WANDB_SINGLE_RUN:-1}" = "1" ] && [ "${WANDB_IS_SMOKE:-0}" != "1" ]; then
+        export WANDB_RUN_ID=$(printf '%s' "$EXP_NAME" | tr -c 'A-Za-z0-9_-' '-' | cut -c1-64)
+        export WANDB_RESUME=allow
+    else
+        WANDB_EXP_NAME_EFF=$EXP_NAME-$SLURM_JOB_ID
+    fi
+    export WANDB_NAME=$WANDB_EXP_NAME_EFF
+    MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $WANDB_EXP_NAME_EFF --wandb-save-dir $SCRATCH_REPO_DIR/_research/results/runs --wandb-entity $WANDB_ENTITY"
 else
     export WANDB_MODE=disabled
 fi
 
-ENV_SETUP="export MASTER_ADDR=$MASTER_ADDR; \
+ENV_SETUP="ulimit -c 0; export MASTER_ADDR=$MASTER_ADDR; \
     export MASTER_PORT=$MASTER_PORT; \
     export RANK=\$SLURM_PROCID; \
     export WORLD_SIZE=\$SLURM_NTASKS; \

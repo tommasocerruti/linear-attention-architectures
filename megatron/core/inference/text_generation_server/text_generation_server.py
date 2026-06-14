@@ -18,6 +18,11 @@ except ImportError as e:
 from megatron.core.inference.text_generation_server.endpoints.common import LOCK, send_do_generate
 from megatron.core.inference.text_generation_server.endpoints.completions import MegatronCompletions
 from megatron.core.inference.text_generation_server.run_mcore_engine import run_mcore_engine
+from megatron.core.inference.text_generation_server.tokenizer_api import (
+    detokenize_for_api,
+    get_tokenizer_info,
+    tokenize_for_api,
+)
 
 sys.path.append(
     os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir, os.path.pardir))
@@ -197,9 +202,56 @@ class MegatronServer(object):
             raise RuntimeError(f"`flask` and/or `flask_restful` are not installed.")
 
         self.app = Flask(__name__, static_url_path='')
+        tokenizer = model.controller.tokenizer
         api = Api(self.app)
         api.add_resource(MegatronGenerate, '/api', resource_class_args=[model, args])
-        api.add_resource(MegatronCompletions, '/completions', resource_class_args=[model, args])
+        api.add_resource(
+            MegatronCompletions,
+            '/completions',
+            '/v1/completions',
+            resource_class_args=[model, args],
+        )
+
+        @self.app.route('/tokenizer_info', methods=['GET'])
+        @self.app.route('/v1/tokenizer_info', methods=['GET'])
+        def tokenizer_info():
+            return jsonify(get_tokenizer_info(tokenizer))
+
+        @self.app.route('/tokenize', methods=['POST'])
+        @self.app.route('/v1/tokenize', methods=['POST'])
+        def tokenize():
+            req = request.get_json(force=True)
+            prompt = req.get("prompt") if req else None
+            if prompt is None:
+                return jsonify({"error": "Missing 'prompt' field"}), 400
+
+            try:
+                token_ids = tokenize_for_api(
+                    tokenizer, prompt, add_special_tokens=bool(req.get("add_special_tokens", False))
+                )
+            except (TypeError, ValueError) as exc:
+                return jsonify({"error": str(exc)}), 400
+            except Exception as exc:
+                return jsonify({"error": f"Error tokenizing prompt: {exc}"}), 500
+
+            return jsonify({"tokens": token_ids})
+
+        @self.app.route('/detokenize', methods=['POST'])
+        @self.app.route('/v1/detokenize', methods=['POST'])
+        def detokenize():
+            req = request.get_json(force=True)
+            token_ids = req.get("tokens") if req else None
+            if token_ids is None:
+                return jsonify({"error": "Missing 'tokens' field"}), 400
+
+            try:
+                prompt = detokenize_for_api(tokenizer, token_ids)
+            except (TypeError, ValueError) as exc:
+                return jsonify({"error": str(exc)}), 400
+            except Exception as exc:
+                return jsonify({"error": f"Error detokenizing tokens: {exc}"}), 500
+
+            return jsonify({"prompt": prompt})
 
     def run(self, url, port):
         """Run the server."""

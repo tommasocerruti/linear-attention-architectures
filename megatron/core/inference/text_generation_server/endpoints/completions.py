@@ -95,9 +95,6 @@ class MegatronCompletions(Resource):
         if local_kwargs.pop("num_completions") > 1:
             return "num_completions > 1 not supported", 400
 
-        if local_kwargs["tokens_to_generate"] > 0 and local_kwargs["return_topk_logprobs"] > 0:
-            return "cannot return top-k unless tokens_to_generate=0 at this time", 400
-
         if local_kwargs["return_topk_logprobs"] > 10:
             return "return_topk_logprobs > 10 not supported", 400
 

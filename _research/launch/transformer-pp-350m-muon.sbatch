@@ -70,7 +70,7 @@ NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 MBS=${MBS:-16}
 GBS=${GBS:-128}
 SEQ_LEN=${SEQ_LEN:-4096}
-TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
+TRAIN_SAMPLES=${TRAIN_SAMPLES:-244141}
 TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 # MUON_LR drives both the main lr and scalar lr at the validated 3.6e-4 / 1.5e-3 ratio (~4.17x).
@@ -218,14 +218,12 @@ DATA_ARGS=(
     --num-workers 4
 )
 
-RECOMPUTE_ARGS=()
-if [ "${RECOMPUTE:-0}" = "1" ]; then
-    RECOMPUTE_ARGS=(
-        --recompute-granularity full
-        --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
-    )
-fi
+CHECKPOINT_ARGS=(
+    --save $WORKDIR/_research/results/checkpoints/$EXP_NAME
+    --save-interval ${SAVE_INTERVAL:-1000}
+    --ckpt-format torch
+)
+mkdir -p $WORKDIR/_research/results/checkpoints/$EXP_NAME
 
 MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
@@ -238,6 +236,7 @@ MEGATRON_ARGS="\
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
     ${RECOMPUTE_ARGS[@]+"${RECOMPUTE_ARGS[@]}"} \
+    ${CHECKPOINT_ARGS[@]} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"

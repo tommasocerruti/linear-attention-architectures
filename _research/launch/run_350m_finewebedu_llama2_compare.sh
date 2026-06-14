@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-variant=${1:?usage: run_350m_finewebedu_llama2_compare.sh softmax|gdn|cler|softmax_muon|gdn_muon|cler_muon}
+variant=${1:?usage: run_350m_finewebedu_llama2_compare.sh softmax|gdn|cler|softmax_muon|gdn_muon|cler_muon|cler_gdn_triton_muon}
 
 source /users/course_00252/.wandb_cler_env
 if [ -f /users/course_00252/.hf_cler_env ]; then
@@ -57,6 +57,12 @@ case "$variant" in
     cler_muon)
         export EXP_NAME=${EXP_NAME:-350m-llama2-fwe1b-cler-v1-muon}
         exec bash _research/launch/transformer-pp-350m-cler-v1-muon.sbatch
+        ;;
+    cler_gdn_triton_muon)
+        export EXP_NAME=${EXP_NAME:-350m-llama2-fwe1b-cler-gdn-triton-muon}
+        export LINEAR_VARIANT=cler_gdn_triton
+        export WANDB_KERNEL=${WANDB_KERNEL:-triton}
+        exec bash _research/launch/transformer-pp-350m-linear-muon.sbatch
         ;;
     *)
         echo "unknown variant: $variant" >&2

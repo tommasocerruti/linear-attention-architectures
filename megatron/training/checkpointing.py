@@ -1519,6 +1519,17 @@ def load_args_from_checkpoint(
     _set_arg('attention_dropout', force=True)
     _set_arg('hidden_dropout', force=True)
 
+    # Local experimental attention variants are architecture-defining and must
+    # follow native checkpoints during eval/inference.
+    _set_arg('experimental_attention_variant', force=True)
+    _set_arg('linear_attention_freq', force=True)
+    _set_arg('linear_conv_kernel_dim', force=True)
+    _set_arg('linear_key_head_dim', force=True)
+    _set_arg('linear_value_head_dim', force=True)
+    _set_arg('linear_num_key_heads', force=True)
+    _set_arg('linear_num_value_heads', force=True)
+    _set_arg('attention_output_gate', force=True)
+
     # Legacy MTP pattern for old checkpoints
     _set_arg('mtp_hybrid_override_pattern', force=True)
     _set_arg('mtp_num_layers', force=True)
@@ -1550,6 +1561,32 @@ def load_args_from_checkpoint(
     # We need to be able to override hybrid_layer_pattern from the command-line so that different
     # pipelining can be specified when re-loading a model (e.g. for inference or post-training).
     _set_arg('hybrid_layer_pattern')
+
+    # Linear attention backbone args (restored from checkpoint; not registered as CLI flags on this branch).
+    _set_arg('experimental_attention_variant', force=True)
+    _set_arg('linear_attention_freq', force=True)
+    _set_arg('linear_conv_kernel_dim', force=True)
+    _set_arg('linear_key_head_dim', force=True)
+    _set_arg('linear_value_head_dim', force=True)
+    _set_arg('linear_num_key_heads', force=True)
+    _set_arg('linear_num_value_heads', force=True)
+    _set_arg('attention_output_gate', force=True)
+    # CLER args (restored from checkpoint; not registered as CLI flags on this branch).
+    _set_arg('cler_enabled', force=True)
+    _set_arg('cler_gamma_init', force=True)
+    _set_arg('cler_gamma_mode', force=True)
+    _set_arg('cler_routing_mode', force=True)
+    _set_arg('cler_residual_norm_eps', force=True)
+    _set_arg('cler_normalize_residual', force=True)
+    _set_arg('cler_detach_residual', force=True)
+    _set_arg('cler_dynamic_gate', force=True)
+    _set_arg('cler_hidden_routing', force=True)
+    _set_arg('cler_hidden_rank', force=True)
+    _set_arg('cler_hidden_self_transform', force=True)
+    _set_arg('cler_hidden_normalize_input', force=True)
+    _set_arg('cler_hidden_gate_by_error', force=True)
+    _set_arg('cler_hidden_route_value', force=True)
+    _set_arg('cler_hidden_route_both', force=True)
 
     # Heterogeneous args.
     _set_arg('heterogeneous_layers_config_path', force=True)

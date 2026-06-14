@@ -10,8 +10,13 @@ from megatron.core.ssm.cler_delta_net_pytorch import (
     CLERDeltaNetSubmodules as CLERDeltaNetPyTorchSubmodules,
 )
 from megatron.core.ssm.delta_net_pytorch import DeltaNet as DeltaNetPyTorch
-from megatron.core.ssm.delta_net_pytorch import DeltaNetSubmodules as DeltaNetPyTorchSubmodules
+from megatron.core.ssm.delta_net_pytorch import (
+    DeltaNetSubmodules as DeltaNetPyTorchSubmodules,
+)
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNetSubmodules
+from megatron.core.ssm.gated_delta_net_pytorch import (
+    GatedDeltaNet as GatedDeltaNetPyTorch,
+)
 from megatron.core.ssm.gated_delta_net2_pytorch import (
     GatedDeltaNet2 as GatedDeltaNet2PyTorch,
 )
@@ -19,6 +24,7 @@ from megatron.core.ssm.gated_delta_net2_pytorch import (
     GatedDeltaNet2Submodules as GatedDeltaNet2PyTorchSubmodules,
 )
 from megatron.core.ssm.gated_delta_net_pytorch import GatedDeltaNet as GatedDeltaNetPyTorch
+from megatron.core.ssm.kda import KimiDeltaAttention, KimiDeltaAttentionSubmodules
 from megatron.core.ssm.linear_transformer_pytorch import (
     LinearTransformer as LinearTransformerPyTorch,
 )
@@ -85,6 +91,27 @@ def get_gated_delta_net_module_spec(
     attention = ModuleSpec(
         module=GatedDeltaNet,
         submodules=GatedDeltaNetSubmodules(
+            in_proj=backend.column_parallel_layer_norm_linear(),
+            out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": True},
+    )
+    return attention
+
+
+def get_gated_delta_net_2_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for GatedDeltaNet2 attention."""
+
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
+    rms_norm = config.normalization == "RMSNorm"
+    attention = ModuleSpec(
+        module=GatedDeltaNet2,
+        submodules=GatedDeltaNet2Submodules(
             in_proj=backend.column_parallel_layer_norm_linear(),
             out_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
             out_proj=backend.row_parallel_linear(),
@@ -220,11 +247,33 @@ def get_linear_transformer_pytorch_module_spec(
     return attention
 
 
+def get_kda_module_spec(
+    config: TransformerConfig, backend: BackendSpecProvider = None
+) -> ModuleSpec:
+    """Build module spec for Kimi Delta Attention."""
+
+    if backend is None:
+        backend = _get_backend_spec_provider(config=config)
+
+    return ModuleSpec(
+        module=KimiDeltaAttention,
+        submodules=KimiDeltaAttentionSubmodules(
+            in_proj=backend.column_parallel_linear(),
+            f_out_proj=backend.column_parallel_linear(),
+            g_out_proj=backend.column_parallel_linear(),
+            out_proj=backend.row_parallel_linear(),
+        ),
+        metainfo={"fuse_input_layernorm": False},
+    )
+
+
 def get_dsa_module_spec_for_backend(
     config: TransformerConfig, backend: BackendSpecProvider = None
 ) -> ModuleSpec:
     """Helper function to get module spec for Sparse Attention."""
-    assert config.multi_latent_attention, "Currently only MLA supports sparse attention."
+    assert config.multi_latent_attention, (
+        "Currently only MLA supports sparse attention."
+    )
     assert config.qk_l2_norm is False, "qk_l2_norm is not supported with MLA."
 
     linear_q_up_proj = (
@@ -289,6 +338,8 @@ def get_experimental_attention_variant_module_spec(
         return get_gated_delta_net2_pytorch_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "gated_delta_net":
         return get_gated_delta_net_module_spec(config=config, backend=backend)
+    elif config.experimental_attention_variant == "gated_delta_net_2":
+        return get_gated_delta_net_2_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net":
         return get_delta_net_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "delta_net_pytorch":
@@ -296,7 +347,11 @@ def get_experimental_attention_variant_module_spec(
     elif config.experimental_attention_variant == "cler_delta_net_pytorch":
         return get_cler_delta_net_pytorch_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "linear_transformer_pytorch":
-        return get_linear_transformer_pytorch_module_spec(config=config, backend=backend)
+        return get_linear_transformer_pytorch_module_spec(
+            config=config, backend=backend
+        )
+    elif config.experimental_attention_variant == "kda":
+        return get_kda_module_spec(config=config, backend=backend)
     elif config.experimental_attention_variant == "dsa":
         return get_dsa_module_spec_for_backend(config=config, backend=backend)
     else:
@@ -311,7 +366,9 @@ def get_experimental_attention_variant_module_spec(
 
 
 def get_transformer_block_with_experimental_attention_variant_spec(
-    config: TransformerConfig, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    config: TransformerConfig,
+    vp_stage: Optional[int] = None,
+    pp_rank: Optional[int] = None,
 ) -> TransformerBlockSubmodules:
     """Build transformer block spec with experimental attention variants (e.g., linear attention).
 
@@ -363,7 +420,9 @@ def get_transformer_block_with_experimental_attention_variant_spec(
         experimental_attention_spec = None
 
     if 0 in experimental_attention_pattern:
-        standard_attention_spec = _get_self_attention_module_spec(config=config, backend=backend)
+        standard_attention_spec = _get_self_attention_module_spec(
+            config=config, backend=backend
+        )
     else:
         standard_attention_spec = None
 
@@ -379,7 +438,9 @@ def get_transformer_block_with_experimental_attention_variant_spec(
         moe_layer_spec = None
 
     if 0 in moe_layer_pattern:
-        dense_mlp_layer_spec = _get_dense_mlp_module_spec(config=config, backend=backend)
+        dense_mlp_layer_spec = _get_dense_mlp_module_spec(
+            config=config, backend=backend
+        )
     else:
         dense_mlp_layer_spec = None
 
@@ -392,7 +453,11 @@ def get_transformer_block_with_experimental_attention_variant_spec(
             if experimental_attention_pattern[layer_number] == 1
             else standard_attention_spec
         )
-        mlp = moe_layer_spec if moe_layer_pattern[layer_number] == 1 else dense_mlp_layer_spec
+        mlp = (
+            moe_layer_spec
+            if moe_layer_pattern[layer_number] == 1
+            else dense_mlp_layer_spec
+        )
         input_layernorm = (
             IdentityOp
             if attention.metainfo["fuse_input_layernorm"]
@@ -424,15 +489,20 @@ def get_transformer_block_with_experimental_attention_variant_spec(
             layer_type=LayerType.decoder, vp_stage=vp_stage, pp_rank=pp_rank
         )
     else:
-        offset = get_transformer_layer_offset(config, vp_stage=vp_stage, pp_rank=pp_rank)
-        num_layers_to_build = get_num_layers_to_build(config, vp_stage=vp_stage, pp_rank=pp_rank)
+        offset = get_transformer_layer_offset(
+            config, vp_stage=vp_stage, pp_rank=pp_rank
+        )
+        num_layers_to_build = get_num_layers_to_build(
+            config, vp_stage=vp_stage, pp_rank=pp_rank
+        )
         local_layer_ids = range(offset, offset + num_layers_to_build)
 
     layer_specs = [layer_specs[layer_id] for layer_id in local_layer_ids]
 
     # Get GPT decoder block spec
     gpt_decoder_block_spec = TransformerBlockSubmodules(
-        layer_specs=layer_specs, layer_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False)
+        layer_specs=layer_specs,
+        layer_norm=backend.layer_norm(rms_norm=rms_norm, for_qk=False),
     )
 
     return gpt_decoder_block_spec
@@ -450,6 +520,7 @@ def is_linear_attention_variant(experimental_attention_variant: Optional[str]) -
         "gated_delta_net2_pytorch",
         "gated_delta_net",
         "delta_net",
+        "kda",
         "delta_net_pytorch",
         "cler_delta_net_pytorch",
         "linear_transformer_pytorch",
@@ -466,7 +537,8 @@ def get_moe_layer_pattern(config: TransformerConfig) -> List[int]:
     if isinstance(config.moe_layer_freq, int):
         # [1,0,0,...,0,1,0,0,...,0,...]
         moe_layer_pattern = [
-            1 if (i % config.moe_layer_freq == 0) else 0 for i in range(config.num_layers)
+            1 if (i % config.moe_layer_freq == 0) else 0
+            for i in range(config.num_layers)
         ]
     elif isinstance(config.moe_layer_freq, list):
         moe_layer_pattern = config.moe_layer_freq
@@ -554,7 +626,9 @@ def _get_self_attention_module_spec(
     if backend is None:
         backend = _get_backend_spec_provider(config=config)
 
-    from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+    from megatron.core.models.gpt.gpt_layer_specs import (
+        get_gpt_layer_with_transformer_engine_spec,
+    )
 
     layer_spec = get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
@@ -607,7 +681,9 @@ def _get_moe_module_spec(
     if backend is None:
         backend = _get_backend_spec_provider(config=config)
 
-    from megatron.core.models.gpt.moe_module_specs import get_moe_module_spec_for_backend
+    from megatron.core.models.gpt.moe_module_specs import (
+        get_moe_module_spec_for_backend,
+    )
 
     moe_spec = get_moe_module_spec_for_backend(
         backend=backend,

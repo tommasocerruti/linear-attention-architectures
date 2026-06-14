@@ -92,6 +92,37 @@ else
 fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
+SAVE_DIR=${SAVE_DIR:-$REPO_DIR/_research/results/checkpoints/$EXP_NAME}
+LOAD_DIR=${LOAD_DIR:-$SAVE_DIR}
+if [ -n "$TRAIN_ITERS" ] && [ "$TRAIN_ITERS" -lt 2000 ]; then
+    SAVE_INTERVAL=${SAVE_INTERVAL:-$TRAIN_ITERS}
+else
+    SAVE_INTERVAL=${SAVE_INTERVAL:-2000}
+fi
+CKPT_FORMAT=${CKPT_FORMAT:-}
+NO_SAVE_OPTIM=${NO_SAVE_OPTIM:-0}
+NO_SAVE_RNG=${NO_SAVE_RNG:-0}
+CHECKPOINT_ARGS=()
+if [ -n "$SAVE_DIR" ]; then
+    mkdir -p "$SAVE_DIR"
+    CHECKPOINT_ARGS=(
+        --save "$SAVE_DIR"
+        --save-interval "$SAVE_INTERVAL"
+    )
+    if [ -d "$LOAD_DIR" ] && [ -n "$(ls -A "$LOAD_DIR" 2>/dev/null)" ]; then
+        CHECKPOINT_ARGS+=(--load "$LOAD_DIR")
+    fi
+fi
+if [ -n "$CKPT_FORMAT" ]; then
+    CHECKPOINT_ARGS+=(--ckpt-format "$CKPT_FORMAT")
+fi
+if [ "$NO_SAVE_OPTIM" = "1" ]; then
+    CHECKPOINT_ARGS+=(--no-save-optim)
+fi
+if [ "$NO_SAVE_RNG" = "1" ]; then
+    CHECKPOINT_ARGS+=(--no-save-rng)
+fi
+
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
 export APERTUS_FEATURE=transformer-pp
 export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-fineweb-muon}
@@ -215,6 +246,7 @@ MEGATRON_ARGS="\
     ${INITIALIZATION_ARGS[@]} \
     ${MIXED_PRECISION_ARGS[@]} \
     ${DISTRIBUTED_ARGS[@]} \
+    ${CHECKPOINT_ARGS[@]+"${CHECKPOINT_ARGS[@]}"} \
     ${LOGGING_ARGS[@]} \
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"

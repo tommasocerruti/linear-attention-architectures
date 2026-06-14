@@ -165,6 +165,12 @@ if [ "${CLER_ENABLED:-0}" = "1" ]; then
     fi
 fi
 
+# Full Attention Residuals passthrough (mixer-agnostic; works with GDN/GDN-2/etc.).
+ATTN_RES_ARGS=()
+if [ "${ATTN_RES_ENABLED:-0}" = "1" ]; then
+    ATTN_RES_ARGS=(--attn-res-enabled)
+fi
+
 TRAINING_ARGS=(
     --micro-batch-size $MBS
     --global-batch-size $GBS
@@ -254,6 +260,7 @@ MEGATRON_ARGS="\
     ${NETWORK_SIZE_ARGS[@]} \
     ${GDN_ARGS[@]} \
     ${CLER_ARGS[@]+"${CLER_ARGS[@]}"} \
+    ${ATTN_RES_ARGS[@]+"${ATTN_RES_ARGS[@]}"} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \

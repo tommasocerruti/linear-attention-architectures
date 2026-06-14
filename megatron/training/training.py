@@ -659,6 +659,30 @@ def num_floating_point_operations(args, batch_size):
                         * v_dim
                     )
                 )
+            elif args.experimental_attention_variant == "kda":
+                qk_head_dim = args.linear_key_head_dim
+                v_head_dim = args.linear_value_head_dim
+                num_qk_heads = args.linear_num_key_heads
+                num_v_heads = args.linear_num_value_heads
+                qk_dim = qk_head_dim * num_qk_heads
+                v_dim = v_head_dim * num_v_heads
+                gate_dim = qk_head_dim * num_v_heads
+                linear_self_attn_term = (
+                    forward_backward_expansion_factor
+                    * fma_expansion_factor
+                    * (
+                        # q/k/v + beta projections
+                        args.hidden_size * (2 * qk_dim + v_dim + num_v_heads)
+                        # f_proj and g_proj bottlenecks
+                        + args.hidden_size * (2 * v_head_dim + gate_dim + v_dim)
+                        # short convolutions
+                        + args.linear_conv_kernel_dim * (2 * qk_dim + v_dim)
+                        # recurrent KDA core
+                        + num_v_heads * qk_head_dim * v_head_dim * 4
+                        # output projection
+                        + args.hidden_size * v_dim
+                    )
+                )
             else:
                 raise ValueError(
                     "Invalid experimental_attention_variant: "

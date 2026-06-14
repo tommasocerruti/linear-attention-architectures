@@ -149,7 +149,15 @@ class GatedDeltaNet2(MegatronModule):
         self.num_key_heads_local_tp = self.num_key_heads // self.tp_size
         self.num_value_heads_local_tp = self.num_value_heads // self.tp_size
 
-        self.in_proj_dim = self.qk_dim * 4 + self.v_dim * 3
+        # Faithful GDN-2: the decay (f_proj) and output gate (g_proj) are LOW-RANK 2-layer
+        # projections (hidden -> head_v_dim -> key_dim/value_dim), as in the paper/reference, rather
+        # than full-rank slices of the fused in_proj. The fused in_proj therefore produces only
+        # q, k, v, erase(b), write(w) = 3*qk + 2*v. Scoped to TP=CP=1 (our setup).
+        if self.tp_size != 1 or self.cp_size != 1:
+            raise NotImplementedError(
+                "Faithful low-rank GDN-2 (f_proj/g_proj) is implemented for TP=1 and CP=1."
+            )
+        self.in_proj_dim = self.qk_dim * 3 + self.v_dim * 2
         if self.config.fp8:
             fp8_align_size = get_fp8_align_size(self.config.fp8_recipe)
             assert self.in_proj_dim % fp8_align_size == 0, (
@@ -167,6 +175,21 @@ class GatedDeltaNet2(MegatronModule):
             is_expert=False,
             tp_comm_buffer_name="fc1",
             tp_group=self.pg_collection.tp,
+        )
+
+        # Low-rank decay projection (hidden -> head_v_dim -> key_dim), per GDN-2.
+        self.f_proj = nn.Sequential(
+            nn.Linear(self.hidden_size, self.value_head_dim, bias=False,
+                      dtype=config.params_dtype, device=torch.cuda.current_device()),
+            nn.Linear(self.value_head_dim, self.qk_dim, bias=False,
+                      dtype=config.params_dtype, device=torch.cuda.current_device()),
+        )
+        # Low-rank output-gate projection (hidden -> head_v_dim -> value_dim, with bias), per GDN-2.
+        self.g_proj = nn.Sequential(
+            nn.Linear(self.hidden_size, self.value_head_dim, bias=False,
+                      dtype=config.params_dtype, device=torch.cuda.current_device()),
+            nn.Linear(self.value_head_dim, self.v_dim, bias=True,
+                      dtype=config.params_dtype, device=torch.cuda.current_device()),
         )
 
         self.conv_dim = self.qk_dim * 2 + self.v_dim
@@ -263,6 +286,12 @@ class GatedDeltaNet2(MegatronModule):
                     device=torch.cuda.current_device(),
                 ).uniform_(*self.A_init_range)
                 self.A_log.data.copy_(torch.log(A))
+                # Low-rank decay/gate projections: init weights with the model init method and
+                # zero the output-gate bias (so the gate starts unbiased), per the GDN-2 reference.
+                for lin in (*self.f_proj, *self.g_proj):
+                    self.config.init_method(lin.weight)
+                    if lin.bias is not None:
+                        nn.init.zeros_(lin.bias)
 
     def forward(
         self,
@@ -292,11 +321,16 @@ class GatedDeltaNet2(MegatronModule):
             raise NotImplementedError("GatedDeltaNet2 does not support packed sequence for now.")
 
         nvtx_range_push(suffix="in_proj")
-        qkvzbwa, _ = self.in_proj(hidden_states)
+        qkvbw, _ = self.in_proj(hidden_states)
         nvtx_range_pop(suffix="in_proj")
 
-        qkvzbwa = tensor_a2a_cp2hp(
-            qkvzbwa,
+        # Low-rank decay and output gate (faithful GDN-2), computed from the hidden states directly
+        # (TP=CP=1, so no all-to-all needed). [seq, batch, *] -> [batch, seq, *].
+        alpha = self.f_proj(hidden_states).transpose(0, 1)
+        gate = self.g_proj(hidden_states).transpose(0, 1)
+
+        qkvbw = tensor_a2a_cp2hp(
+            qkvbw,
             seq_dim=0,
             head_dim=-1,
             cp_group=self.pg_collection.cp,

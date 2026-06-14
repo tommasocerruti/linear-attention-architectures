@@ -6,6 +6,7 @@
 # LICENSE file in the root directory of this source tree.
 
 import logging
+import os
 from dataclasses import dataclass, replace
 from typing import List, Optional, Tuple, Union
 
@@ -26,6 +27,15 @@ from megatron.core.ssm.mamba_context_parallel import (
     _all_to_all_hp2cp,
     _redo_attention_load_balancing,
     _undo_attention_load_balancing,
+)
+from megatron.core.ssm.cler_utils import (
+    chunk_gated_delta_rule_with_residual,
+    inject_cler_residual,
+    inject_cler_residual_attnres,
+    inject_cler_residual_dynamic,
+    make_cler_attn_params,
+    make_cler_gamma_parameter,
+    make_cler_gate,
 )
 from megatron.core.tensor_parallel import get_cuda_rng_tracker
 from megatron.core.transformer import TransformerConfig
@@ -206,8 +216,58 @@ class GatedDeltaNet(MegatronModule):
 
         if self.config.deterministic_mode:
             self.gated_delta_rule = torch_chunk_gated_delta_rule
+        elif self.config.cler_enabled:
+            self.gated_delta_rule = chunk_gated_delta_rule_with_residual
         else:
             self.gated_delta_rule = chunk_gated_delta_rule
+        self.supports_cler = True
+        self.cler_residual = None
+        self.cler_value = None  # raw value v, stashed for the cler_hidden_route_value control
+        self.cler_gate = None
+        self.cler_gate_activation = None
+        self.cler_attn_query = None
+        self.cler_attn_self_bias = None
+        self.cler_attn_self_gate = None
+        if self.config.cler_enabled and self.config.cler_routing_mode == "attnres":
+            # AttnRes-style routing: convex softmax attention over {value} + prior write residuals.
+            self.register_parameter("cler_gamma", None)
+            self.cler_attn_query, self.cler_attn_self_bias = make_cler_attn_params(
+                config=self.config,
+                num_value_heads_local_tp=self.num_v_heads_local_tp,
+                value_head_dim=self.value_head_dim,
+                cp_size=self.cp_size,
+                variant_name="GDN",
+            )
+            if self.config.cler_dynamic_gate:
+                # Dynamic-gate variant: data-dependent per-token self-bias (Linear(value)).
+                self.register_parameter("cler_attn_self_bias", None)
+                self.cler_attn_self_gate = make_cler_gate(
+                    config=self.config,
+                    value_head_dim=self.value_head_dim,
+                    variant_name="GDN",
+                    bias_init=6.0,
+                )
+        elif self.config.cler_enabled and self.config.cler_dynamic_gate:
+            # Data-dependent per-token gate replaces the static gamma parameter.
+            self.register_parameter("cler_gamma", None)
+            self.cler_gate = make_cler_gate(
+                config=self.config,
+                value_head_dim=self.value_head_dim,
+                variant_name="GDN",
+            )
+        elif self.config.cler_enabled and not self.config.cler_hidden_routing:
+            # Value-space CLER (original): static gamma mixes the routed residual into the value.
+            self.cler_gamma = make_cler_gamma_parameter(
+                config=self.config,
+                num_value_heads_local_tp=self.num_v_heads_local_tp,
+                value_head_dim=self.value_head_dim,
+                cp_size=self.cp_size,
+                variant_name="GDN",
+            )
+        else:
+            # CLER-H / CLER-V route via the hidden-space projection P_l (in the block), not gamma;
+            # and non-CLER. No gamma parameter is created (it would be a dead, always-zero param).
+            self.register_parameter("cler_gamma", None)
 
         # Output layernorm before projection
         self.out_norm = build_module(
@@ -285,6 +345,11 @@ class GatedDeltaNet(MegatronModule):
         # TODO: Deal with attention_mask
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
+        cler_residual = kwargs.pop("cler_residual", None)
+        del kwargs
+        self.cler_residual = None
+        self.cler_value = None
+        self.cler_gate_activation = None
 
         seq_len, batch, _ = hidden_states.shape
         seq_len = seq_len * self.sp_size * self.cp_size
@@ -397,6 +462,42 @@ class GatedDeltaNet(MegatronModule):
         )
         nvtx_range_pop(suffix="prepare_qkv_for_gated_delta_rule")
 
+        if self.config.cler_enabled and self.config.cler_routing_mode == "attnres":
+            value = inject_cler_residual_attnres(
+                value=value,
+                residual_stack=cler_residual,
+                cler_query=self.cler_attn_query,
+                cler_self_bias=self.cler_attn_self_bias,
+                config=self.config,
+                variant_name="GDN",
+                cler_self_gate=self.cler_attn_self_gate,
+            )
+        elif self.config.cler_enabled and self.config.cler_dynamic_gate:
+            value, gate_activation = inject_cler_residual_dynamic(
+                value=value,
+                cler_residual=cler_residual,
+                cler_gate=self.cler_gate,
+                config=self.config,
+                variant_name="GDN",
+            )
+            self.cler_gate_activation = (
+                gate_activation.detach() if gate_activation is not None else None
+            )
+        elif self.config.cler_enabled and not self.config.cler_hidden_routing:
+            value = inject_cler_residual(
+                value=value,
+                cler_residual=cler_residual,
+                cler_gamma=self.cler_gamma,
+                config=self.config,
+                variant_name="GDN",
+            )
+
+        # CLER-H control: stash the raw value v (write content, before the kernel's delta-rule
+        # subtracts the memory read) so it can be routed into the hidden stream instead of r = v - Wφ(k),
+        # and so the logger can record ||v|| alongside ||r|| for any CLER run.
+        if self.config.cler_enabled:
+            self.cler_value = value
+
         # Calculate g and beta
         nvtx_range_push(suffix="g_and_beta")
         A_log_local_cp = get_parameter_local_cp(self.A_log, dim=0, cp_group=self.pg_collection.cp)
@@ -407,17 +508,49 @@ class GatedDeltaNet(MegatronModule):
         nvtx_range_pop(suffix="g_and_beta")
 
         nvtx_range_push(suffix="gated_delta_rule")
-        core_attn_out, last_recurrent_state = self.gated_delta_rule(
-            query,
-            key,
-            value,
-            g=g,
-            beta=beta,
-            initial_state=None,
-            output_final_state=False,
-            use_qk_l2norm_in_kernel=False,
-        )
+        if self.config.cler_enabled:
+            core_attn_out, last_recurrent_state, self.cler_residual = self.gated_delta_rule(
+                query,
+                key,
+                value,
+                g=g,
+                beta=beta,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+                return_residual=True,
+            )
+        else:
+            core_attn_out, last_recurrent_state = self.gated_delta_rule(
+                query,
+                key,
+                value,
+                g=g,
+                beta=beta,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=False,
+            )
         nvtx_range_pop(suffix="gated_delta_rule")
+
+        # Optional magnitude probe: compare ||value v|| vs ||write residual r|| (env-gated, no-op by
+        # default). r = v - Wφ(k) is the unpredicted part, so typically ||r|| < ||v||; this quantifies
+        # the gap that motivates the CLER-V vs CLER-H magnitude question.
+        if os.environ.get("MEGATRON_CLER_LOG_MAG") == "1" and self.config.cler_enabled:
+            import torch.distributed as _dist
+            if (not _dist.is_initialized()) or _dist.get_rank() == 0:
+                with torch.no_grad():
+                    vn = value.float().norm(dim=-1).mean().item()
+                    rn = (
+                        self.cler_residual.float().norm(dim=-1).mean().item()
+                        if self.cler_residual is not None
+                        else float("nan")
+                    )
+                print(
+                    f"[CLER-MAG] layer={getattr(self, 'layer_number', -1)} "
+                    f"|v|={vn:.4f} |r|={rn:.4f} v/r={vn / max(rn, 1e-9):.3f}",
+                    flush=True,
+                )
 
         # RMSNorm
         nvtx_range_push(suffix="gated_norm")
@@ -512,13 +645,16 @@ class GatedDeltaNet(MegatronModule):
         sharded_state_dict = {}
         # Parameters
         self._save_to_state_dict(sharded_state_dict, "", keep_vars=True)
+        tensor_parallel_layers_axis_map = {
+            "A_log": 0,
+            "dt_bias": 0,
+        }
+        if self.config.cler_enabled and self.config.cler_gamma_mode in {"head", "channel"}:
+            tensor_parallel_layers_axis_map["cler_gamma"] = 0
         sharded_state_dict = make_sharded_tensors_for_checkpoint(
             sharded_state_dict,
             prefix,
-            tensor_parallel_layers_axis_map={
-                "A_log": 0,
-                "dt_bias": 0,
-            },  # parameters sharded across TP
+            tensor_parallel_layers_axis_map=tensor_parallel_layers_axis_map,
             sharded_offsets=sharded_offsets,
             tp_group=(tp_group if tp_group is not None else self.pg_collection.tp),
             dp_cp_group=metadata['dp_cp_group'],
@@ -853,6 +989,7 @@ def torch_chunk_gated_delta_rule(
     initial_state=None,
     output_final_state=False,
     use_qk_l2norm_in_kernel=False,
+    return_residual=False,
 ):
     # pylint: disable=line-too-long
     '''
@@ -911,6 +1048,7 @@ def torch_chunk_gated_delta_rule(
         else initial_state.to(value)
     )
     core_attn_out = torch.zeros_like(value)
+    residual_out = torch.zeros_like(value) if return_residual else None
     mask = torch.triu(
         torch.ones(chunk_size, chunk_size, dtype=torch.bool, device=query.device), diagonal=1
     )
@@ -921,6 +1059,8 @@ def torch_chunk_gated_delta_rule(
         attn = (q_i @ k_i.transpose(-1, -2) * decay_mask[:, :, i]).masked_fill_(mask, 0)
         v_prime = (k_cumdecay[:, :, i]) @ last_recurrent_state
         v_new = v_i - v_prime
+        if return_residual:
+            residual_out[:, :, i] = v_new
         attn_inter = (q_i * g[:, :, i, :, None].exp()) @ last_recurrent_state
         core_attn_out[:, :, i] = attn_inter + attn @ v_new
         last_recurrent_state = (
@@ -935,4 +1075,11 @@ def torch_chunk_gated_delta_rule(
     )
     core_attn_out = core_attn_out[:, :, :sequence_length]
     core_attn_out = core_attn_out.transpose(1, 2).contiguous().to(initial_dtype)
+    if return_residual:
+        residual_out = residual_out.reshape(
+            residual_out.shape[0], residual_out.shape[1], -1, residual_out.shape[-1]
+        )
+        residual_out = residual_out[:, :, :sequence_length]
+        residual_out = residual_out.transpose(1, 2).contiguous().to(initial_dtype)
+        return core_attn_out, last_recurrent_state, residual_out
     return core_attn_out, last_recurrent_state
