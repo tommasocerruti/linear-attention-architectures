@@ -553,3 +553,250 @@ comparison shows no clear downstream-task gain from CLER: gamma=0.1 is
 essentially tied on HellaSwag acc_norm and slightly higher on PIQA acc_norm, but
 lower on WinoGrande; gamma=0.0 is slightly higher on WinoGrande, but lower on
 HellaSwag acc_norm and PIQA acc_norm. The effects are small and mixed.
+
+## Week 7
+
+### 350M MUON CLER vs Baseline — Full 3-Task Eval (15B tokens, iter 28610)
+
+Evaluated Lingfeng's six 350M 15B-token MUON checkpoints with the scoring server
+path (`SERVER_IMPL=scoring`, `--transformer-impl transformer_engine`). All six
+jobs ran on `iter_0028610` (15B tokens). The attention variant was read directly
+from each server log after startup and confirmed non-`None` in all cases.
+
+Checkpoint roots: `/iopsstor/scratch/cscs/lingfeng/cler/_research/results/checkpoints/<MODEL>`
+
+Result JSONs: `_research/results/eval/<MODEL>-lm-eval/cler/results_*.json`
+
+| Model | Attn variant | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| GDN-350M-15B-MUON | `gated_delta_net` | 0.3434 | 0.4131 | 0.6692 | 0.6649 | 0.5146 |
+| CLER-H-350M-15B-MUON | `gated_delta_net` | 0.2969 | 0.3348 | 0.6121 | 0.5990 | 0.5059 |
+| CLER-V-350M-15B-MUON | `gated_delta_net` | 0.2592 | 0.2640 | 0.5169 | 0.5054 | 0.5028 |
+| DELTANET-350M-15B-MUON | `delta_net` | 0.3410 | 0.4113 | 0.6600 | 0.6605 | 0.5193 |
+| DELTANET-CLER-H-350M-15B-MUON | `delta_net` | 0.3290 | 0.3908 | 0.6627 | 0.6523 | 0.5225 |
+| DELTANET-CLER-V-350M-15B-MUON | `delta_net` | 0.2509 | 0.2585 | 0.5169 | 0.4935 | 0.5028 |
+
+Short read: GDN and pure DeltaNet remain the strongest models across all three
+tasks. DELTANET-CLER-H is competitive on PIQA and WinoGrande but falls off on
+HellaSwag. The vertical CLER variants (CLER-V and DELTANET-CLER-V) perform near
+chance on all tasks — their HellaSwag acc_norm (~0.26) and PIQA acc (~0.52)
+suggest the vertical CLER design is not learning useful representations at this
+scale and token budget. CLER-H fares better than CLER-V but is still clearly
+behind the pure GDN/DeltaNet baselines. The CLER suffix refers to additional CLER
+layers mixed into the GDN or DeltaNet backbone; the linear attention variant
+(gated or ungated delta rule) is determined by the backbone and was confirmed from
+checkpoint args in all six server logs.
+
+### Validity Audit of the Week 7 lm_eval Results
+
+After seeing CLER-V collapse to chance despite having good training-time validation
+loss, I ran a full audit of whether the lm_eval results above are valid. The audit
+covered checkpoint loading, CLER arg restoration, model key matching, the scoring
+server's forward path, raw loglikelihood scores, tokenizer, and command identity.
+
+#### Finding: the CLER-V and DELTANET-CLER-V results are invalid
+
+**Root cause.** The scoring server is built from tcerruti's Megatron checkout, which
+contains no CLER implementation. Searching the entire `megatron/` source tree for
+`cler_enabled`, `cler_hidden_routing`, `cler_hidden_route_value`, or any CLER
+module returns zero hits. The CLER forward pass lives exclusively in Lingfeng's
+fork. The server therefore ran a pure GDN or DeltaNet forward for all six models,
+regardless of how each checkpoint was trained.
+
+**Why the checkpoint loaded cleanly.** CLER does not add extra learnable parameters
+— the checkpoint's model state dict has the same key structure as a pure GDN model.
+There are no missing or unexpected tensor keys, so the distributed checkpoint loader
+(`dist_ckpt_strictness = assume_ok_unexpected`) emitted no warnings and reported a
+clean load for all six jobs. The per-job log lines confirm this:
+
+```
+successfully loaded checkpoint from .../CLER-V-350M-15B-MUON [...] at iteration 28610
+```
+
+**Why CLER args were not restored.** `--use-checkpoint-args` only restores args that
+are registered in tcerruti's `megatron/training/arguments.py`. The CLER args
+(`cler_enabled`, `cler_hidden_routing`, `cler_hidden_route_value`, etc.) are not
+registered there, so `--use-checkpoint-args` silently skips them. No
+`Setting cler_* from checkpoint` line appears in any server log. The server started
+every job with `cler_enabled = False` (the default).
+
+**What the checkpoint args actually say.** Parsed directly from the checkpoint
+pickle files:
+
+| Arg | GDN | CLER-H | CLER-V | DELTANET | DN-CLER-H | DN-CLER-V |
+| --- | --- | --- | --- | --- | --- | --- |
+| `cler_enabled` | False | **True** | **True** | False | **True** | **True** |
+| `cler_hidden_routing` | False | **True** | **True** | False | **True** | **True** |
+| `cler_hidden_route_value` | False | False | **True** | False | False | **True** |
+| `cler_hidden_gate_by_error` | False | False | False | False | False | False |
+| `cler_hidden_route_both` | False | False | False | False | False | False |
+| `cler_dynamic_gate` | False | False | False | False | False | False |
+| `attn_res_enabled` | False | False | False | False | False | False |
+
+The single flag that separates H from V is `cler_hidden_route_value`. CLER-V (and
+DELTANET-CLER-V) set this to `True`, meaning CLER routes error corrections into the
+**delta rule's value targets** during training. CLER-H does not.
+
+**Why CLER-V collapses but CLER-H only degrades.** When `cler_hidden_route_value =
+True`, every GDN or DeltaNet value target seen during training included a CLER
+correction term:
+
+```
+v_effective = v_raw + cler_correction(error_signal)
+```
+
+The backbone parameters learned to expect this correction at every layer. At eval
+time, without CLER, `v_effective = v_raw` only. The delta rule writes corrupted
+memory to its state matrix at each of the 20 layers, and the errors compound. The
+output distribution collapses to sub-uniform entropy — raw loglikelihoods for
+CLER-V are 3–5× more negative than GDN on the same examples (e.g., −426 nats vs
+−97 nats for the same PIQA continuation), which is worse than a uniform distribution
+over the 32k vocabulary.
+
+CLER-H (`cler_hidden_route_value = False`) never routed into the value targets, so
+the backbone's delta rule parameters were trained in a regime closer to normal. Its
+performance degrades (roughly 5–8 acc_norm points below GDN) but does not collapse.
+
+**Evidence from raw loglikelihoods.** Three HellaSwag samples and three PIQA samples
+were compared between GDN and CLER-V. GDN assigns per-token log-prob around −4 to
+−5 nats/token (perplexity ~80–150). CLER-V assigns around −21 nats/token
+(perplexity ~1.8 billion, far worse than chance). The differences between choices
+are also compressed and sometimes sign-flipped, which is why accuracy collapses to
+exactly 25% (HellaSwag) and 50% (PIQA, WinoGrande) — consistent with uniform
+random guessing.
+
+**Tokenizer and command identity.** All six jobs used the same tokenizer
+(`Llama2Tokenizer`, `tokenizer.model` from Lingfeng's path, `padded_vocab_size =
+32000`), the same lm_eval version, the same `batch_size = 8`, `max_length = 4096`,
+and `SERVER_IMPL = scoring`. The harness itself is not at fault.
+
+#### Validity summary
+
+| Model | Result validity |
+| --- | --- |
+| GDN-350M-15B-MUON | **Valid** — `cler_enabled=False`, pure GDN forward |
+| DELTANET-350M-15B-MUON | **Valid** — `cler_enabled=False`, pure DeltaNet forward |
+| CLER-H-350M-15B-MUON | **Partially valid** — backbone ran without CLER-H routing; measures the CLER-H backbone without CLER active, not the intended model |
+| DELTANET-CLER-H-350M-15B-MUON | **Partially valid** — same caveat as CLER-H |
+| CLER-V-350M-15B-MUON | **Invalid** — sub-uniform output; backbone weights unusable without `cler_hidden_route_value` correction |
+| DELTANET-CLER-V-350M-15B-MUON | **Invalid** — same reason |
+
+#### What needs to happen to get valid CLER results
+
+The CLER-H and CLER-V evals need to be rerun from Lingfeng's Megatron fork, which
+implements the CLER forward pass. Two practical paths:
+
+1. **Run the eval from Lingfeng's checkout.** Set `REPO_DIR` in the sbatch to
+   Lingfeng's source tree instead of tcerruti's. Everything else (sbatch script,
+   scoring server, lm_eval harness) can stay the same.
+
+2. **Port the CLER modules.** Add `cler_hidden_routing` and `cler_hidden_route_value`
+   logic to `gated_delta_net.py` / `delta_net.py` in tcerruti's checkout, register
+   the relevant args in `arguments.py` and `checkpointing.py`, and rerun. Needs
+   Lingfeng's implementation as reference.
+
+Until one of these is done, the Week 7 table should be read as: GDN and DELTANET
+baselines are reliable; CLER-H/V numbers measure "backbone without CLER" (a
+degradation artifact) and are not a fair comparison of the CLER method.
+
+### Rerun with mega-cler branch (COMPLETED 2026-06-14)
+
+Path taken: option 2 — tcerruti's checkout was switched to the `mega-cler` branch
+(commit `a3f26241b0e7e753170e41367edb05ae44dfe18d`), which contains Lingfeng's
+CLER implementation (`megatron/core/ssm/cler_delta_net_pytorch.py`,
+`cler_hidden_routing.py`, etc.) and the CLER fields in `TransformerConfig`.
+
+**Code fixes required:**
+
+1. `megatron/training/checkpointing.py`: Added `_set_arg(..., force=True)` calls
+   for backbone args (`experimental_attention_variant`, `linear_attention_freq`, etc.)
+   and all CLER args (`cler_enabled`, `cler_hidden_routing`, `cler_hidden_route_value`,
+   etc.). Without these, `--use-checkpoint-args` cannot restore the backbone variant
+   or CLER routing flags, so CLER would silently stay disabled.
+
+2. `_research/launch/install_python_deps_eval.sh`: `cler_utils.py` imports from
+   `fla.ops.common.chunk_delta_h` and other ops that only exist in fla 0.5.0.
+   The v9 packages (fla 0.4.2) set `HAVE_FLA=False`, causing `_require_fla()` to
+   raise `ImportError` on every forward pass (HTTP 500 from the scoring server).
+   Fix: new eval install script targeting `packages-server-cler`, installs
+   `fla-core==0.5.0` without tilelang (avoids TVM conflict from the v13 script).
+
+3. `tools/run_loglikelihood_scoring_server.py` and `run_lm_eval_local_api.sbatch`
+   ported from main branch (did not exist in mega-cler).
+
+Smoke tests (LIMIT=10, debug partition): all 4 passed in ~2 min (jobs 2531702–2531726).
+CLER arg restoration confirmed in server logs (e.g. `Setting cler_hidden_route_value to
+True from checkpoint` for CLER-V; `False` for CLER-H).
+
+Full 3-task eval jobs (normal partition, `--ntasks-per-node=1 --gpus-per-node=1`,
+90-min walltime, `SERVER_PACKAGE_DIR=packages-server-cler`):
+
+| Model | SLURM job | Elapsed |
+| --- | --- | --- |
+| CLER-H-350M-15B-MUON | 2531739 | 00:50:49 |
+| CLER-V-350M-15B-MUON | 2531740 | 00:50:59 |
+| DELTANET-CLER-H-350M-15B-MUON | 2531741 | 00:49:39 |
+| DELTANET-CLER-V-350M-15B-MUON | 2531742 | 00:49:46 |
+
+**Valid CLER results (iter_0028610, 15B tokens, hellaswag/piqa/winogrande):**
+
+| Model | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GDN-350M-15B-MUON *(valid, Week 7)* | 0.3434 | 0.4131 | 0.6692 | 0.6649 | 0.5146 |
+| DELTANET-350M-15B-MUON *(valid, Week 7)* | 0.3410 | 0.4113 | 0.6600 | 0.6605 | 0.5193 |
+| CLER-H-350M-15B-MUON | 0.3423 | 0.4104 | 0.6670 | 0.6556 | 0.5209 |
+| CLER-V-350M-15B-MUON | 0.3421 | 0.4113 | 0.6719 | 0.6600 | 0.5328 |
+| DELTANET-CLER-H-350M-15B-MUON | 0.3424 | 0.4069 | 0.6681 | 0.6757 | 0.5264 |
+| DELTANET-CLER-V-350M-15B-MUON | 0.3437 | 0.4104 | 0.6616 | 0.6551 | 0.5359 |
+
+Key takeaway: with CLER active, the V variants no longer collapse — they match GDN
+and DeltaNet baselines closely. CLER (H and V) neither hurts nor helps downstream
+task accuracy at this scale/token budget compared to the pure GDN/DeltaNet baselines.
+
+Result JSONs: `_research/results/eval/<MODEL>-lm-eval/cler/results_*.json`
+
+---
+
+## Full Valid Results (all experiments)
+
+All rows below use the scoring server (`SERVER_IMPL=scoring`, full-sequence forward
+passes), the LLaMA-2 tokenizer, `batch_size=8`, `max_length=4096`, and 0-shot
+evaluation. No rows with the old static/dynamic server or with invalid checkpoint-arg
+restoration are included.
+
+### Lingfeng 350M MUON — CLER comparison (15B tokens, iter 28610)
+
+Six checkpoints from `/iopsstor/scratch/cscs/lingfeng/cler/_research/results/checkpoints/<MODEL>`.
+GDN/DeltaNet baselines evaluated in Week 7; CLER variants rerun on 2026-06-14
+on the mega-cler branch with CLER args properly restored from checkpoint.
+
+| Model | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GDN-350M-15B-MUON | 0.3434 | 0.4131 | 0.6692 | 0.6649 | 0.5146 |
+| DELTANET-350M-15B-MUON | 0.3410 | 0.4113 | 0.6600 | 0.6605 | 0.5193 |
+| CLER-H-350M-15B-MUON | 0.3423 | 0.4104 | 0.6670 | 0.6556 | 0.5209 |
+| CLER-V-350M-15B-MUON | 0.3421 | 0.4113 | 0.6719 | 0.6600 | 0.5328 |
+| DELTANET-CLER-H-350M-15B-MUON | 0.3424 | 0.4069 | 0.6681 | 0.6757 | 0.5264 |
+| DELTANET-CLER-V-350M-15B-MUON | 0.3437 | 0.4104 | 0.6616 | 0.6551 | 0.5359 |
+
+### Broader 350M/1.3B/3B matrix (Week 5, tcerruti's checkpoints)
+
+Full 3-task scoring results from Week 5. The 350M rows are tcerruti's training runs;
+the 1.3B/3B rows are Tim's DeltaNet checkpoints. The 1.3B CLER rows use the earlier
+`cler_gamma` formulation (deprecated), not the CLER-H/V design from Week 7.
+
+| Size | Architecture | Variant | Optimizer | Iter | Train tokens | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 350M | GDN | hybrid | Muon | 28610 | 15.0B | 0.3480 | 0.4158 | 0.6676 | 0.6741 | 0.5414 |
+| 350M | GDN | pure DeltaRule | Muon | 28610 | 15.0B | 0.3337 | 0.3978 | 0.6763 | 0.6741 | 0.4870 |
+| 350M | DeltaNet | hybrid | Muon | 28610 | 15.0B | 0.3541 | 0.4305 | 0.6681 | 0.6779 | 0.5051 |
+| 350M | DeltaNet | pure DeltaRule | Muon | 28610 | 15.0B | 0.3426 | 0.4133 | 0.6741 | 0.6801 | 0.5170 |
+| 350M | GDN | hybrid | AdamW | 28610 | 15.0B | 0.3369 | 0.3992 | 0.6616 | 0.6616 | 0.5099 |
+| 350M | GDN | pure DeltaRule | AdamW | 28610 | 15.0B | 0.3265 | 0.3817 | 0.6561 | 0.6572 | 0.5217 |
+| 350M | DeltaNet | hybrid | AdamW | 28610 | 15.0B | 0.3361 | 0.3987 | 0.6654 | 0.6513 | 0.5249 |
+| 350M | DeltaNet | pure DeltaRule | AdamW | 28610 | 15.0B | 0.3293 | 0.3918 | 0.6480 | 0.6551 | 0.5154 |
+| 1.3B | DeltaNet | hybrid | Muon | 19073 | 40.0B | 0.4277 | 0.5484 | 0.7209 | 0.7301 | 0.5572 |
+| 1.3B | DeltaNet | pure DeltaRule, no CLER | Muon | 19073 | 40.0B | 0.4119 | 0.5234 | 0.7106 | 0.7193 | 0.5612 |
+| 1.3B | CLER-DeltaNet | pure DeltaRule, gamma=0.1 | Muon | 19073 | 40.0B | 0.4049 | 0.5231 | 0.7089 | 0.7203 | 0.5446 |
+| 1.3B | CLER-DeltaNet | pure DeltaRule, gamma=0.0 | Muon | 19073 | 40.0B | 0.4078 | 0.5220 | 0.7095 | 0.7160 | 0.5627 |
+| 3B | DeltaNet | hybrid | Muon | 7152 | 60.0B | 0.4617 | 0.6063 | 0.7334 | 0.7410 | 0.5848 |

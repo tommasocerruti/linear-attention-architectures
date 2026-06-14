@@ -319,6 +319,11 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks, s
             'rank': args.rank,
             'timeout': timedelta(minutes=args.distributed_timeout_minutes),
         }
+        if (
+            device_id is not None
+            and os.environ.get("MEGATRON_INIT_PROCESS_GROUP_DEVICE_ID", "0") == "1"
+        ):
+            init_process_group_kwargs['device_id'] = device_id
         if args.fake_process_group:
             assert is_torch_min_version(
                 "2.3.0"

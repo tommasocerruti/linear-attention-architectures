@@ -200,7 +200,7 @@ elif [ "$SERVER_IMPL" = "static" ]; then
             --inference-max-seq-length 4096 \
             $SERVER_EXTRA_ARGS"
 elif [ "$SERVER_IMPL" = "scoring" ]; then
-    SERVER_CMD="bash $WORKDIR/_research/launch/install_python_deps.sh $PACKAGE_DIR && \
+    SERVER_CMD="bash $WORKDIR/_research/launch/install_python_deps_eval.sh $PACKAGE_DIR && \
         if ! PYTHONPATH=$SERVER_PYTHONPATH python3 -c 'import flask' >/dev/null 2>&1; then \
             python3 -m pip install --quiet --target=$PACKAGE_DIR flask; \
         fi && \

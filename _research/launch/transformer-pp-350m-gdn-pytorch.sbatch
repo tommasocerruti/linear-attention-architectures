@@ -32,10 +32,17 @@ echo "START TIME: $(date)"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
 REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
+WORKDIR=${CLER_REPO_ROOT:-${SLURM_SUBMIT_DIR:-$REPO_DIR}}
+if [ ! -f "$WORKDIR/pretrain_gpt.py" ]; then
+    WORKDIR=$REPO_DIR
+fi
+if [ ! -f "$WORKDIR/pretrain_gpt.py" ]; then
+    echo "ERROR: CLER repo not found. Set CLER_REPO_ROOT to the checkout containing pretrain_gpt.py." >&2
+    exit 1
+fi
 cd $WORKDIR
 
-PACKAGE_DIR=$REPO_DIR/_research/packages
+PACKAGE_DIR=${PACKAGE_DIR:-$REPO_DIR/_research/packages}
 DATASET_CACHE_DIR=$REPO_DIR/cache/dataset
 TMP_CACHE_DIR=$REPO_DIR/cache/tmp
 
@@ -46,6 +53,11 @@ export TORCH_CPP_LOG_LEVEL=WARNING
 export TRITON_CACHE_DIR=$REPO_DIR/cache/triton
 export TORCHINDUCTOR_CACHE_DIR=$REPO_DIR/cache/inductor
 export TORCHINDUCTOR_USE_STATIC_CUDA_LAUNCHER=0
+export MEGATRON_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-1}
+export MEGATRON_LINEAR_TORCH_COMPILE_MODE=${MEGATRON_LINEAR_TORCH_COMPILE_MODE:-reduce-overhead}
+export MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS=${MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS:-0}
+export MEGATRON_DISABLE_JIT_FUSER=${MEGATRON_DISABLE_JIT_FUSER:-0}
+export MEGATRON_INIT_PROCESS_GROUP_DEVICE_ID=${MEGATRON_INIT_PROCESS_GROUP_DEVICE_ID:-0}
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TMPDIR=$TMP_CACHE_DIR
@@ -61,7 +73,7 @@ FFN_HIDDEN=${FFN_HIDDEN:-2816}
 NUM_HEADS=${NUM_HEADS:-16}
 NUM_KV_HEADS=${NUM_KV_HEADS:-4}
 
-MBS=${MBS:-16}
+MBS=${MBS:-2}
 GBS=${GBS:-128}
 SEQ_LEN=${SEQ_LEN:-4096}
 TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
@@ -70,11 +82,11 @@ EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
 LR=${LR:-3e-4}
 MIN_LR=${MIN_LR:-3e-5}
 
-TP=1
-PP=1
+TP=${TP:-1}
+PP=${PP:-1}
 CP=${CP:-1}
 
-PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
+PROJECT=${WANDB_PROJECT:-clerv1-runs}
 EXP_NAME=${EXP_NAME:-transformer-pp-350m-gdn-pytorch-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
@@ -96,7 +108,7 @@ fi
 EVAL_ITERS=${EVAL_ITERS:-0}
 
 export APERTUS_LOG_DIR=$WORKDIR/_research/results/performance
-export APERTUS_FEATURE=gated-deltanet-pytorch
+export APERTUS_FEATURE=${APERTUS_FEATURE:-gated-deltanet-pytorch}
 export APERTUS_TRACK=${APERTUS_TRACK:-transformer-pp-350m-gdn-pytorch}
 export APERTUS_RUN_NAME=$EXP_NAME-$SLURM_JOB_ID
 export APERTUS_LOG_ACT_STATS=0
@@ -126,7 +138,7 @@ NETWORK_SIZE_ARGS=(
 )
 
 GDN_ARGS=(
-    --experimental-attention-variant gated_delta_net_pytorch
+    --experimental-attention-variant ${GDN_ATTENTION_VARIANT:-gated_delta_net_pytorch}
     --linear-attention-freq ${LINEAR_ATTENTION_FREQ:-3}
     --linear-conv-kernel-dim ${LINEAR_CONV_KERNEL_DIM:-4}
     --linear-key-head-dim ${LINEAR_KEY_HEAD_DIM:-64}
@@ -135,6 +147,28 @@ GDN_ARGS=(
     --linear-num-value-heads ${LINEAR_NUM_VALUE_HEADS:-8}
     --attention-output-gate
 )
+
+CLER_ARGS=()
+if [ "${CLER_ENABLED:-0}" = "1" ]; then
+    CLER_ARGS=(
+        --cler-enabled
+        --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
+        --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+        --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
+    )
+    if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-detach-residual)
+    fi
+    if [ "${CLER_NORMALIZE_RESIDUAL:-0}" = "1" ]; then
+        CLER_ARGS+=(--cler-normalize-residual)
+    fi
+fi
+
+# Full Attention Residuals passthrough (mixer-agnostic; works with GDN/GDN-2/etc.).
+ATTN_RES_ARGS=()
+if [ "${ATTN_RES_ENABLED:-0}" = "1" ]; then
+    ATTN_RES_ARGS=(--attn-res-enabled)
+fi
 
 TRAINING_ARGS=(
     --micro-batch-size $MBS
@@ -193,6 +227,7 @@ LOGGING_ARGS=(
     --log-progress
     --log-memory-to-tensorboard
     --log-params-norm
+    --log-validation-ppl-to-tensorboard
     --tensorboard-dir $WORKDIR/_research/results/runs/tb-$SLURM_JOB_ID
     --tensorboard-log-interval 1
     --log-timers-to-tensorboard
@@ -215,7 +250,7 @@ if [ "${RECOMPUTE:-0}" = "1" ]; then
     RECOMPUTE_ARGS=(
         --recompute-granularity full
         --recompute-method uniform
-        --recompute-num-layers $NUM_LAYERS
+        --recompute-num-layers ${RECOMPUTE_NUM_LAYERS:-$NUM_LAYERS}
     )
 fi
 
@@ -223,6 +258,8 @@ MEGATRON_ARGS="\
     ${TRANSFORMER_ENGINE_ARGS[@]} \
     ${NETWORK_SIZE_ARGS[@]} \
     ${GDN_ARGS[@]} \
+    ${CLER_ARGS[@]+"${CLER_ARGS[@]}"} \
+    ${ATTN_RES_ARGS[@]+"${ATTN_RES_ARGS[@]}"} \
     ${TRAINING_ARGS[@]} \
     ${REGULARIZATION_ARGS[@]} \
     ${LEARNING_RATE_ARGS[@]} \
@@ -234,17 +271,28 @@ MEGATRON_ARGS="\
     ${TOKENIZER_ARGS[@]} \
     ${DATA_ARGS[@]}"
 
-export WANDB_ARCH=gdn
-export WANDB_KERNEL=torch
-export WANDB_OPTIMIZER=adamw
-export WANDB_MODEL_SIZE=350M
+export WANDB_ARCH=${WANDB_ARCH:-gdn}
+export WANDB_KERNEL=${WANDB_KERNEL:-torch}
+export WANDB_OPTIMIZER=${WANDB_OPTIMIZER:-adamw}
+export WANDB_MODEL_SIZE=${WANDB_MODEL_SIZE:-350M}
 export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
+export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
+export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
+export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
+export WANDB_CLER_GAMMA_MODE=${CLER_GAMMA_MODE:-scalar}
+export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
+export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
+export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
+export WANDB_ENTITY=${WANDB_ENTITY:-cler}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
     MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
+    if [ -n "${WANDB_ENTITY:-}" ]; then
+        MEGATRON_ARGS="$MEGATRON_ARGS --wandb-entity $WANDB_ENTITY"
+    fi
 else
     export WANDB_MODE=disabled
 fi
@@ -256,6 +304,11 @@ ENV_SETUP="export MASTER_ADDR=$MASTER_ADDR; \
     export LOCAL_RANK=\$SLURM_LOCALID; \
     export LOCAL_WORLD_SIZE=$((SLURM_NTASKS/SLURM_NNODES)); \
     export PYTHONPATH=$WORKDIR:$PACKAGE_DIR:$WORKDIR\${PYTHONPATH:+:\$PYTHONPATH}; \
+    export MEGATRON_LINEAR_TORCH_COMPILE=$MEGATRON_LINEAR_TORCH_COMPILE; \
+    export MEGATRON_LINEAR_TORCH_COMPILE_MODE=$MEGATRON_LINEAR_TORCH_COMPILE_MODE; \
+    export MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS=$MEGATRON_LINEAR_TORCH_COMPILE_CUDAGRAPHS; \
+    export MEGATRON_DISABLE_JIT_FUSER=$MEGATRON_DISABLE_JIT_FUSER; \
+    export MEGATRON_INIT_PROCESS_GROUP_DEVICE_ID=$MEGATRON_INIT_PROCESS_GROUP_DEVICE_ID; \
     cd $WORKDIR"
 
 TRAINING_CMD="bash $WORKDIR/_research/launch/install_python_deps.sh $PACKAGE_DIR && python3 $WORKDIR/pretrain_gpt.py $MEGATRON_ARGS"

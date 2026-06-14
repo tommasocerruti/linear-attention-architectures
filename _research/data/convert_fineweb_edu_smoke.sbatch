@@ -17,7 +17,10 @@
 
 set -euo pipefail
 
-REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+REPO_ROOT=${CLER_REPO_ROOT:-${SLURM_SUBMIT_DIR:-/iopsstor/scratch/cscs/$USER/cler}}
+if [ ! -f "$REPO_ROOT/pretrain_gpt.py" ]; then
+    REPO_ROOT=/iopsstor/scratch/cscs/$USER/cler
+fi
 SCRIPT_DIR=$REPO_ROOT/_research/data
 cd "$REPO_ROOT"
 

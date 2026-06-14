@@ -29,7 +29,14 @@ echo "START TIME: $(date)"
 export APERTUS_PHASE_SBATCH_START=$(date +%s.%N)
 
 REPO_DIR=/iopsstor/scratch/cscs/$USER/cler
-WORKDIR=${SLURM_SUBMIT_DIR:-$REPO_DIR}
+WORKDIR=${CLER_REPO_ROOT:-${SLURM_SUBMIT_DIR:-$REPO_DIR}}
+if [ ! -f "$WORKDIR/pretrain_gpt.py" ]; then
+    WORKDIR=$REPO_DIR
+fi
+if [ ! -f "$WORKDIR/pretrain_gpt.py" ]; then
+    echo "ERROR: CLER repo not found. Set CLER_REPO_ROOT to the checkout containing pretrain_gpt.py." >&2
+    exit 1
+fi
 cd $WORKDIR
 
 PACKAGE_DIR=$REPO_DIR/_research/packages
@@ -64,14 +71,14 @@ SEQ_LEN=${SEQ_LEN:-4096}
 TRAIN_SAMPLES=${TRAIN_SAMPLES:-3662109}
 TRAIN_ITERS=${TRAIN_ITERS:-}
 EXIT_DURATION_IN_MINS=${EXIT_DURATION_IN_MINS:-595}
-LR=3e-4
+LR=${LR:-3e-4}
 MIN_LR=${MIN_LR:-3e-5}
 
 TP=1
 PP=1
 CP=${CP:-1}
 
-PROJECT=${WANDB_PROJECT:-megatron-lm-research-baseline}
+PROJECT=${WANDB_PROJECT:-clerv1-runs}
 EXP_NAME=${EXP_NAME:-transformer-pp-350m-adamw-$(git rev-parse --short HEAD)}
 
 if [ -n "$TRAIN_ITERS" ]; then
@@ -227,6 +234,13 @@ DATA_ARGS=(
     --num-workers 4
 )
 
+CHECKPOINT_ARGS=(
+    --save $WORKDIR/_research/results/checkpoints/$EXP_NAME
+    --save-interval ${SAVE_INTERVAL:-1000}
+    --ckpt-format torch
+)
+mkdir -p $WORKDIR/_research/results/checkpoints/$EXP_NAME
+
 RECOMPUTE_ARGS=()
 if [ "${RECOMPUTE:-0}" = "1" ]; then
     RECOMPUTE_ARGS=(
@@ -257,11 +271,15 @@ export WANDB_OPTIMIZER=adamw
 export WANDB_MODEL_SIZE=350M
 export WANDB_SEQ_LEN=$SEQ_LEN
 export WANDB_IS_SMOKE=${WANDB_IS_SMOKE:-0}
+export WANDB_ENTITY=${WANDB_ENTITY:-cler}
 
 if [ -n "${WANDB_API_KEY:-}" ]; then
     export WANDB_PROJECT=$PROJECT
     export WANDB_NAME=$EXP_NAME-$SLURM_JOB_ID
     MEGATRON_ARGS="$MEGATRON_ARGS --wandb-project $PROJECT --wandb-exp-name $EXP_NAME-$SLURM_JOB_ID --wandb-save-dir $WORKDIR/_research/results/runs"
+    if [ -n "${WANDB_ENTITY:-}" ]; then
+        MEGATRON_ARGS="$MEGATRON_ARGS --wandb-entity $WANDB_ENTITY"
+    fi
 else
     export WANDB_MODE=disabled
 fi

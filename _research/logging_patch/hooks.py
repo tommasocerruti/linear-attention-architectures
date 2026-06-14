@@ -9,6 +9,8 @@ from __future__ import annotations
 import math
 import os
 import time
+import json
+from pathlib import Path
 from typing import Any
 
 from . import phase_timer
@@ -34,6 +36,14 @@ _STATE: dict[str, Any] = {
     "act_accum": {},
     "top1_correct": 0.0,
     "top1_total": 0.0,
+    "cler_gamma_log_path": None,
+    "cler_gamma_log_announced": False,
+    "cler_residual_log_path": None,
+    "cler_residual_log_announced": False,
+    "cler_value_log_path": None,
+    "cler_value_log_announced": False,
+    "cler_proj_log_path": None,
+    "cler_proj_log_announced": False,
 }
 
 
@@ -125,6 +135,509 @@ def _per_layer_grad_norms(model: Any) -> dict[str, float]:
                 continue
             out[name] = float(p.grad.detach().float().norm().item())
     return out
+
+
+def _collect_cler_gamma_stats(model: Any) -> dict[str, Any]:
+    chunks = model if isinstance(model, list) else [model]
+    gammas: dict[str, float] = {}
+    for chunk in chunks:
+        for name, p in chunk.named_parameters():
+            if not name.endswith("cler_gamma"):
+                continue
+            values = p.detach().float().reshape(-1)
+            if values.numel() == 1:
+                gammas[name] = float(values.item())
+            else:
+                for index, value in enumerate(values.tolist()):
+                    gammas[f"{name}.{index}"] = float(value)
+
+    if not gammas:
+        return {}
+
+    values = list(gammas.values())
+    abs_values = [abs(value) for value in values]
+    return {
+        "count": len(values),
+        "mean": sum(values) / len(values),
+        "min": min(values),
+        "max": max(values),
+        "abs_mean": sum(abs_values) / len(abs_values),
+        "max_abs": max(abs_values),
+        "l2": math.sqrt(sum(value * value for value in values)),
+        "values": gammas,
+    }
+
+
+def _tensor_summary(tensor: Any) -> dict[str, Any]:
+    import torch
+
+    if not isinstance(tensor, torch.Tensor):
+        return {}
+
+    with torch.no_grad():
+        data = tensor.detach()
+        values = data.float().reshape(-1)
+        numel = int(values.numel())
+        if numel == 0:
+            return {
+                "shape": list(data.shape),
+                "dtype": str(data.dtype).replace("torch.", ""),
+                "numel": 0,
+            }
+
+        finite = torch.isfinite(values)
+        finite_count = int(finite.sum().item())
+        if finite_count == 0:
+            return {
+                "shape": list(data.shape),
+                "dtype": str(data.dtype).replace("torch.", ""),
+                "numel": numel,
+                "finite_ratio": 0.0,
+            }
+        if finite_count != numel:
+            values = values[finite]
+
+        abs_values = values.abs()
+        square_mean = values.square().mean()
+        return {
+            "shape": list(data.shape),
+            "dtype": str(data.dtype).replace("torch.", ""),
+            "numel": numel,
+            "finite_ratio": finite_count / numel,
+            "mean": float(values.mean().item()),
+            "std": float(values.std(unbiased=False).item()),
+            "abs_mean": float(abs_values.mean().item()),
+            "max_abs": float(abs_values.max().item()),
+            "rms": float(square_mean.sqrt().item()),
+            "l2": float(values.norm().item()),
+        }
+
+
+def _collect_cler_route_query_stats(model: Any) -> dict[str, Any]:
+    chunks = model if isinstance(model, list) else [model]
+    queries: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, p in chunk.named_parameters():
+            if "cler_route_queries" not in name:
+                continue
+            stats = _tensor_summary(p)
+            if stats:
+                queries[name] = stats
+
+    if not queries:
+        return {}
+
+    abs_means = [
+        float(stats["abs_mean"]) for stats in queries.values() if "abs_mean" in stats
+    ]
+    max_abs_values = [
+        float(stats["max_abs"]) for stats in queries.values() if "max_abs" in stats
+    ]
+    payload: dict[str, Any] = {
+        "count": len(queries),
+        "queries": queries,
+    }
+    if abs_means:
+        payload["abs_mean_mean"] = sum(abs_means) / len(abs_means)
+    if max_abs_values:
+        payload["max_abs"] = max(max_abs_values)
+    return payload
+
+
+def _collect_attn_res_query_stats(model: Any) -> dict[str, Any]:
+    chunks = model if isinstance(model, list) else [model]
+    queries: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, p in chunk.named_parameters():
+            if "attn_res_queries" not in name:
+                continue
+            stats = _tensor_summary(p)
+            if stats:
+                queries[name] = stats
+
+    if not queries:
+        return {}
+
+    abs_means = [float(s["abs_mean"]) for s in queries.values() if "abs_mean" in s]
+    max_abs_values = [float(s["max_abs"]) for s in queries.values() if "max_abs" in s]
+    payload: dict[str, Any] = {"count": len(queries), "queries": queries}
+    if abs_means:
+        payload["abs_mean_mean"] = sum(abs_means) / len(abs_means)
+    if max_abs_values:
+        payload["max_abs"] = max(max_abs_values)
+    return payload
+
+
+def _collect_cler_residual_stats(model: Any) -> dict[str, Any]:
+    chunks = model if isinstance(model, list) else [model]
+    layers: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, module in chunk.named_modules():
+            if not name.endswith(".self_attention"):
+                continue
+            residual = getattr(module, "cler_residual", None)
+            if residual is None:
+                continue
+            stats = _tensor_summary(residual)
+            if stats:
+                layers[f"{name}.cler_residual"] = stats
+
+    if not layers:
+        return {}
+
+    abs_means = [
+        float(stats["abs_mean"]) for stats in layers.values() if "abs_mean" in stats
+    ]
+    max_abs_values = [
+        float(stats["max_abs"]) for stats in layers.values() if "max_abs" in stats
+    ]
+    payload: dict[str, Any] = {
+        "count": len(layers),
+        "layers": layers,
+    }
+    if abs_means:
+        payload["abs_mean_mean"] = sum(abs_means) / len(abs_means)
+    if max_abs_values:
+        payload["max_abs"] = max(max_abs_values)
+    return payload
+
+
+def _collect_cler_value_stats(model: Any) -> dict[str, Any]:
+    """Summarize the GDN value tensor v (stashed as cler_value), parallel to the residual stats.
+    Lets us compare ||v|| vs ||r|| for CLER-V vs CLER-H runs (the magnitude question)."""
+    chunks = model if isinstance(model, list) else [model]
+    layers: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, module in chunk.named_modules():
+            if not name.endswith(".self_attention"):
+                continue
+            value = getattr(module, "cler_value", None)
+            if value is None:
+                continue
+            stats = _tensor_summary(value)
+            if stats:
+                layers[f"{name}.cler_value"] = stats
+    if not layers:
+        return {}
+    abs_means = [float(s["abs_mean"]) for s in layers.values() if "abs_mean" in s]
+    payload: dict[str, Any] = {"count": len(layers), "layers": layers}
+    if abs_means:
+        payload["abs_mean_mean"] = sum(abs_means) / len(abs_means)
+    return payload
+
+
+def _collect_cler_gate_stats(model: Any) -> dict[str, Any]:
+    """Summarize the data-dependent CLER dynamic-gate activations sigmoid(Linear(value))."""
+    chunks = model if isinstance(model, list) else [model]
+    layers: dict[str, dict[str, Any]] = {}
+    for chunk in chunks:
+        for name, module in chunk.named_modules():
+            if not name.endswith(".self_attention"):
+                continue
+            gate = getattr(module, "cler_gate_activation", None)
+            if gate is None:
+                continue
+            stats = _tensor_summary(gate)
+            if stats:
+                layers[f"{name}.cler_gate"] = stats
+
+    if not layers:
+        return {}
+
+    means = [float(s["mean"]) for s in layers.values() if "mean" in s]
+    max_abs_values = [float(s["max_abs"]) for s in layers.values() if "max_abs" in s]
+    payload: dict[str, Any] = {"count": len(layers), "layers": layers}
+    if means:
+        payload["mean_mean"] = sum(means) / len(means)
+    if max_abs_values:
+        payload["max_abs"] = max(max_abs_values)
+    return payload
+
+
+def _append_cler_gate_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_GATE_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_gate_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_gate_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_gate.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_gate_log_path"] = path
+
+    if not _STATE.get("cler_gate_log_announced"):
+        print(f"[cler] dynamic-gate stats log: {path}", flush=True)
+        _STATE["cler_gate_log_announced"] = True
+
+    payload = {"step": int(iteration), "wall": time.time(), **stats}
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _append_cler_residual_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    if os.environ.get("CLER_RESIDUAL_LOG_ENABLED", "1") == "0":
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_RESIDUAL_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_residual_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_residual_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_residual.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_residual_log_path"] = path
+
+    if not _STATE.get("cler_residual_log_announced"):
+        print(f"[cler] residual stats log: {path}", flush=True)
+        _STATE["cler_residual_log_announced"] = True
+
+    payload = {
+        "step": int(iteration),
+        "wall": time.time(),
+        **stats,
+    }
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _collect_cler_proj_stats(model: Any) -> dict[str, Any]:
+    """Effective norm of each CLER-H/V hidden projection P_l (the true 'gain' analog of the old
+    gamma). For low-rank P_l = up@down the effective matrix is composed first. Logged over training."""
+    import torch
+
+    chunks = model if isinstance(model, list) else [model]
+    groups: dict[str, list] = {}
+    for chunk in chunks:
+        for name, p in chunk.named_parameters():
+            if "cler_hidden_proj" not in name:
+                continue
+            idx = name.split("cler_hidden_proj.")[1].split(".")[0]
+            groups.setdefault(idx, []).append(p.detach())
+    if not groups:
+        return {}
+    layers: dict[str, float] = {}
+    vals: list[float] = []
+    with torch.no_grad():
+        for idx, mats in groups.items():
+            if len(mats) == 1:
+                W = mats[0].float()
+            else:
+                down = min(mats, key=lambda t: t.shape[0]).float()  # [r, in]
+                up = max(mats, key=lambda t: t.shape[0]).float()    # [out, r]
+                W = up @ down
+            n = float(torch.linalg.norm(W))
+            layers[idx] = n
+            vals.append(n)
+    return {
+        "count": len(vals),
+        "fro_mean": sum(vals) / len(vals),
+        "fro_min": min(vals),
+        "fro_max": max(vals),
+        "layers": layers,
+    }
+
+
+def _append_cler_proj_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    if os.environ.get("CLER_RESIDUAL_LOG_ENABLED", "1") == "0":
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_RESIDUAL_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_proj_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_proj_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_proj.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_proj_log_path"] = path
+
+    if not _STATE.get("cler_proj_log_announced"):
+        print(f"[cler] projection-norm log: {path}", flush=True)
+        _STATE["cler_proj_log_announced"] = True
+
+    payload = {"step": int(iteration), "wall": time.time(), **stats}
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _append_cler_value_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    if os.environ.get("CLER_RESIDUAL_LOG_ENABLED", "1") == "0":
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_RESIDUAL_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_value_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_value_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_value.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_value_log_path"] = path
+
+    if not _STATE.get("cler_value_log_announced"):
+        print(f"[cler] value stats log: {path}", flush=True)
+        _STATE["cler_value_log_announced"] = True
+
+    payload = {"step": int(iteration), "wall": time.time(), **stats}
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _append_attn_res_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("ATTN_RES_LOG_INTERVAL", "100"))
+    except ValueError:
+        interval = 100
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_attn_res_query_stats(model)
+    if not stats:
+        return {}
+
+    path = _STATE.get("attn_res_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.attn_res.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["attn_res_log_path"] = path
+
+    if not _STATE.get("attn_res_log_announced"):
+        print(f"[attn_res] query stats log: {path}", flush=True)
+        _STATE["attn_res_log_announced"] = True
+
+    payload = {"step": int(iteration), "wall": time.time(), **stats}
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
+
+
+def _append_cler_gamma_log(iteration: int) -> dict[str, Any]:
+    if int(os.environ.get("RANK", "0")) != 0:
+        return {}
+    model = _STATE.get("model")
+    if model is None:
+        return {}
+    try:
+        interval = int(os.environ.get("CLER_GAMMA_LOG_INTERVAL", "10"))
+    except ValueError:
+        interval = 10
+    interval = max(interval, 1)
+    if int(iteration) % interval != 0 and int(iteration) != 1:
+        return {}
+
+    stats = _collect_cler_gamma_stats(model)
+    if not stats:
+        stats = {}
+
+    route_query_stats = _collect_cler_route_query_stats(model)
+    if route_query_stats:
+        stats["route_queries"] = route_query_stats
+
+    if not stats:
+        return {}
+
+    path = _STATE.get("cler_gamma_log_path")
+    if path is None:
+        log_dir = Path(os.environ.get("APERTUS_LOG_DIR", "_research/results/performance"))
+        run_name = os.environ.get("APERTUS_RUN_NAME", "run")
+        path = str(log_dir / f"{run_name}.cler_gamma.jsonl")
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        Path(path).write_text("")
+        _STATE["cler_gamma_log_path"] = path
+
+    if not _STATE.get("cler_gamma_log_announced"):
+        print(f"[cler] gamma stats log: {path}", flush=True)
+        _STATE["cler_gamma_log_announced"] = True
+
+    payload = {
+        "step": int(iteration),
+        "wall": time.time(),
+        **stats,
+    }
+    with Path(path).open("a") as fh:
+        fh.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        fh.write("\n")
+    return stats
 
 
 def _is_spike(loss: float) -> bool:
@@ -278,12 +791,14 @@ def patch_training_log() -> None:
         report_memory_flag, skipped_iter, grad_norm, params_norm,
         num_zeros_in_grad, max_attention_logit,
         pg_collection=None, is_first_iteration=False,
+        **kwargs,
     ):
         ret = original(
             loss_dict, total_loss_dict, learning_rate, iteration, loss_scale,
             report_memory_flag, skipped_iter, grad_norm, params_norm,
             num_zeros_in_grad, max_attention_logit,
             pg_collection=pg_collection, is_first_iteration=is_first_iteration,
+            **kwargs,
         )
 
         writer = _STATE["writer"]
@@ -342,6 +857,20 @@ def patch_training_log() -> None:
             row["params_norm"] = float(params_norm)
         if tokens_per_sec_per_gpu is not None:
             row["tput"] = float(tokens_per_sec_per_gpu)
+        cler_gamma_stats = _append_cler_gamma_log(int(iteration))
+        if cler_gamma_stats:
+            row["cler_gamma"] = cler_gamma_stats
+        _append_cler_value_log(int(iteration))
+        _append_cler_proj_log(int(iteration))
+        cler_residual_stats = _append_cler_residual_log(int(iteration))
+        if cler_residual_stats:
+            row["cler_residual"] = cler_residual_stats
+        attn_res_stats = _append_attn_res_log(int(iteration))
+        if attn_res_stats:
+            row["attn_res_queries"] = attn_res_stats
+        cler_gate_stats = _append_cler_gate_log(int(iteration))
+        if cler_gate_stats:
+            row["cler_gate"] = cler_gate_stats
 
         if _STATE["log_per_layer_grads"] and _STATE["model"] is not None:
             row["per_layer_grad_norm"] = _per_layer_grad_norms(_STATE["model"])

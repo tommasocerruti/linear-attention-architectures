@@ -11,6 +11,7 @@ whose layers do not implement incremental inference caches.
 
 import os
 import sys
+import traceback
 import threading
 from functools import partial
 from typing import Any, Dict, List, Optional, Tuple
@@ -319,6 +320,7 @@ class ScoringHttpServer:
             except (TypeError, ValueError) as exc:
                 return _json_error(str(exc))
             except Exception as exc:
+                traceback.print_exc()
                 return _json_error(f"error scoring prompt: {exc}", status=500)
 
             return jsonify({"choices": choices})

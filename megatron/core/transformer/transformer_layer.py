@@ -331,6 +331,9 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
             layer_number=self.layer_number,
             **attention_optional_kwargs,
         )
+        self.supports_cler = getattr(self.self_attention, "supports_cler", False)
+        self.cler_residual = None
+        self.cler_value = None
 
         # [Module 3: BiasDropoutFusion]
         self.self_attn_bda = build_module(submodules.self_attn_bda)
@@ -540,6 +543,7 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[Tensor] = None,
         padding_mask: Optional[Tensor] = None,
+        cler_residual: Optional[Tensor] = None,
         *,
         inference_params: Optional[Any] = None,
     ):
@@ -563,6 +567,8 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
             packed_seq_params (object, optional): Parameters for packed sequence processing.
             sequence_len_offset (Tensor, optional): Offset along sequence dimension
                 during inference.
+            cler_residual (Tensor, optional): Previous layer's CLER residual for supported
+                attention variants.
 
         Returns:
             Tuple[Tensor, Tensor]: A tuple containing:
@@ -611,6 +617,13 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
             self._set_proj_residual(residual)
 
         # Self attention.
+        self.cler_residual = None
+        self.cler_value = None
+        self.supports_cler = getattr(self.self_attention, "supports_cler", False)
+        self_attention_kwargs = {}
+        if self.config.cler_enabled and self.supports_cler:
+            self_attention_kwargs["cler_residual"] = cler_residual
+
         nvtx_range_push(suffix="self_attention")
         attention_output_with_bias = self.self_attention(
             input_layernorm_output,
@@ -623,7 +636,11 @@ class TransformerLayer(GraphableMegatronModule, BaseTransformerLayer):
             attention_bias=attention_bias,
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
+            **self_attention_kwargs,
         )
+        if self.config.cler_enabled and self.supports_cler:
+            self.cler_residual = getattr(self.self_attention, "cler_residual", None)
+            self.cler_value = getattr(self.self_attention, "cler_value", None)
         nvtx_range_pop(suffix="self_attention")
 
         if self.recompute_input_layernorm:

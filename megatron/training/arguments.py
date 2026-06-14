@@ -2075,6 +2075,8 @@ def _add_network_size_args(parser):
         "num_moe_experts",
         "fp8_param",
         "fp4_param",
+        # registered manually in _add_experimental_attention_variant_args
+        "kda_use_fla_wrapper",
         # incompatible defaults in dataclass
         "gradient_accumulation_fusion",
         "overlap_p2p_comm",
@@ -3241,6 +3243,13 @@ def _add_experimental_attention_variant_args(parser):
                             'where 1 indicates an LA layer and 0 indicates a SDPA layer. '
                             'Examples: "([0]+[1]*23)": 1 SDPA layer followed by 23 LA layers, '
                             '"([1]*3+[0]*2)*2": Three LA layers followed by two SDPA layers, repeated twice.')
+    group.add_argument(
+        '--kda-use-fla-wrapper',
+        action='store_true',
+        default=False,
+        help='Use the full upstream fla.layers.kda.KimiDeltaAttention module for KDA layers. '
+             'This is intended for 1-GPU loss comparison against the Megatron-native KDA path.',
+    )
     return parser
 
 def _add_heterogeneous_args(parser):
