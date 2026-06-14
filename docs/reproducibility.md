@@ -1,9 +1,10 @@
-# Reproducing CLER Results
+# Reproducing Linear Attention Architecture Results
 
 This document covers everything needed to reproduce the training runs and
-downstream evaluations from the CLER paper on the Clariden (Swiss AI Alps)
-cluster at CSCS. The steps proceed in order: cluster access → environment →
-dataset → training → evaluation.
+downstream evaluations from "Linear Attention Architectures: Mechanisms,
+Trade-offs, and Cross-Layer Routing" on the Clariden (Swiss AI Alps) cluster
+at CSCS. The steps proceed in order: cluster access, environment, dataset,
+training, and evaluation.
 
 ---
 
@@ -68,25 +69,28 @@ code via the fast scratch path.
 ## 2. Repository Setup
 
 ```bash
-# Clone the repository (replace with the public arXiv release URL)
-git clone <repo-url> ~/cler
-cd ~/cler
+# Clone the release repository
+git clone <repo-url> ~/linear-attention-architectures
+cd ~/linear-attention-architectures
 
 # Symlink so compute nodes can find it via iopsstor
-ln -sfn /users/$USER/cler /iopsstor/scratch/cscs/$USER/cler
+ln -sfn /users/$USER/linear-attention-architectures \
+  /iopsstor/scratch/cscs/$USER/linear-attention-architectures
 ```
 
-The main branch for training is `mega-cler`. Check it out:
+Use the current release branch. During this cleanup that branch is `clean-up`;
+after merge it should be `main`. Older branch names in pre-release notes are
+stale.
 
 ```bash
-git checkout mega-cler
+git checkout main
 ```
 
 Create output directories on scratch:
 
 ```bash
-mkdir -p /iopsstor/scratch/cscs/$USER/cler/_research/results/{runs,checkpoints,eval}
-mkdir -p /iopsstor/scratch/cscs/$USER/cler/cache/{tmp,triton,inductor}
+mkdir -p /iopsstor/scratch/cscs/$USER/linear-attention-architectures/_research/results/{runs,checkpoints,eval}
+mkdir -p /iopsstor/scratch/cscs/$USER/linear-attention-architectures/cache/{tmp,triton,inductor}
 ```
 
 ### 2.1 Python dependencies
@@ -454,20 +458,17 @@ tail -f /iopsstor/scratch/cscs/$USER/cler/_research/results/eval/<RUN_NAME>-smok
 
 ### 6.2 Downstream tasks (HellaSwag / PIQA / WinoGrande, iter 28 610)
 
-Results below are from the corrected eval (mega-cler branch, CLER args
-properly restored from checkpoint). GDN and DeltaNet baselines from
-initial eval (same settings, architecture args confirmed in server logs).
+Results below are from the scoring-server eval path, with architecture and
+CLER args restored from checkpoint and confirmed in the server logs.
 
-*(Table will be updated once the CLER rerun jobs complete.)*
-
-| Model | HellaSwag acc_norm | PIQA acc_norm | WinoGrande acc |
-| --- | ---: | ---: | ---: |
-| GDN-350M-15B-MUON | 0.4131 | 0.6649 | 0.5146 |
-| DELTANET-350M-15B-MUON | 0.4113 | 0.6605 | 0.5193 |
-| CLER-H-350M-15B-MUON | *pending* | *pending* | *pending* |
-| CLER-V-350M-15B-MUON | *pending* | *pending* | *pending* |
-| DELTANET-CLER-H-350M-15B-MUON | *pending* | *pending* | *pending* |
-| DELTANET-CLER-V-350M-15B-MUON | *pending* | *pending* | *pending* |
+| Model | HellaSwag acc | HellaSwag acc_norm | PIQA acc | PIQA acc_norm | WinoGrande acc |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| GDN-350M-15B-MUON | 0.3434 | 0.4131 | 0.6692 | 0.6649 | 0.5146 |
+| CLER-H-350M-15B-MUON | 0.3423 | 0.4104 | 0.6670 | 0.6556 | 0.5209 |
+| CLER-V-350M-15B-MUON | 0.3421 | 0.4113 | 0.6719 | 0.6600 | 0.5328 |
+| DELTANET-350M-15B-MUON | 0.3410 | 0.4113 | 0.6600 | 0.6605 | 0.5193 |
+| DELTANET-CLER-H-350M-15B-MUON | 0.3424 | 0.4069 | 0.6681 | 0.6757 | 0.5264 |
+| DELTANET-CLER-V-350M-15B-MUON | 0.3437 | 0.4104 | 0.6616 | 0.6551 | 0.5359 |
 
 ---
 
@@ -489,8 +490,9 @@ export HF_HOME=/iopsstor/scratch/cscs/$USER/hf_home
 
 **Architecture args not restored (e.g. `experimental_attention_variant=None`)** —
 ensure `--use-checkpoint-args` is passed to the server (it is, by default, in
-the sbatch). Check that the `mega-cler` branch is checked out; the main branch
-is missing the `_set_arg()` calls for linear attention and CLER args in
+the sbatch). Use the current release branch (`main` after this cleanup is
+merged, or `clean-up` while reviewing it); older branches may be missing the
+checkpoint-argument restoration for linear attention and CLER args in
 `megatron/training/checkpointing.py`.
 
 **CLER-V scores collapse to near-chance** — CLER was not active during eval.

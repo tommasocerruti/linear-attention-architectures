@@ -5,8 +5,8 @@
 #SBATCH --account=lsaie-ss26
 #SBATCH --partition=normal
 #SBATCH --time=14:00:00
-#SBATCH --output=/iopsstor/scratch/cscs/%u/cler-mega-cler/_research/results/runs/%x-%j.log
-#SBATCH --error=/iopsstor/scratch/cscs/%u/cler-mega-cler/_research/results/runs/%x-%j.log
+#SBATCH --output=/iopsstor/scratch/cscs/%u/linear-attention-architectures/_research/results/runs/%x-%j.log
+#SBATCH --error=/iopsstor/scratch/cscs/%u/linear-attention-architectures/_research/results/runs/%x-%j.log
 #SBATCH --nodes=16
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-node=4
