@@ -338,18 +338,22 @@ class GatedDeltaNet2(MegatronModule):
                 self.qk_dim_local_tp,
                 self.qk_dim_local_tp,
                 self.v_dim_local_tp,
+                self.v_dim_local_tp,
                 self.qk_dim_local_tp,
                 self.v_dim_local_tp,
+                self.qk_dim_local_tp,
             ],
         )
 
-        qkvbw = qkvbw.transpose(0, 1)
-        qkv, erase, write = torch.split(
-            qkvbw,
+        qkvzbwa = qkvzbwa.transpose(0, 1)
+        qkv, gate, erase, write, alpha = torch.split(
+            qkvzbwa,
             [
                 (self.qk_dim_local_tp * 2 + self.v_dim_local_tp) // self.cp_size,
+                self.v_dim_local_tp // self.cp_size,
                 self.qk_dim_local_tp // self.cp_size,
                 self.v_dim_local_tp // self.cp_size,
+                self.qk_dim_local_tp // self.cp_size,
             ],
             dim=-1,
         )

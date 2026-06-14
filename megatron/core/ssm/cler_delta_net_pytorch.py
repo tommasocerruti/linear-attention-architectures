@@ -223,6 +223,7 @@ class CLERDeltaNet(DeltaNet):
         query, key, value, beta = self._prepare_qkv_for_delta_rule(qkv, beta, batch, seq_len)
         nvtx_range_pop(suffix="prepare_qkv_for_delta_rule")
 
+        incoming_cler_residual = None
         if self.config.cler_enabled:
             if cler_residual is not None:
                 if self.config.cler_detach_residual:
@@ -232,9 +233,10 @@ class CLERDeltaNet(DeltaNet):
                         "CLER residual shape must match the current DeltaNet value shape, "
                         f"got {cler_residual.shape=} and {value.shape=}."
                     )
-                cler_residual = self._maybe_normalize_cler_residual(cler_residual)
-                value = value + self._cler_gamma_for_value(value) * cler_residual
-            else:
+                incoming_cler_residual = self._maybe_normalize_cler_residual(cler_residual)
+                if self.config.cler_injection_site in {"value", "both"}:
+                    value = value + self._cler_gamma_for_value(value) * incoming_cler_residual
+            elif self.config.cler_injection_site in {"value", "both"}:
                 value = value + self._cler_gamma_for_value(value) * value.new_zeros(())
 
         nvtx_range_push(suffix="delta_rule")
@@ -260,6 +262,21 @@ class CLERDeltaNet(DeltaNet):
                 use_qk_l2norm_in_kernel=False,
             )
         nvtx_range_pop(suffix="delta_rule")
+
+        if (
+            self.config.cler_enabled
+            and self.config.cler_injection_site in {"output", "both"}
+        ):
+            if incoming_cler_residual is not None:
+                core_attn_out = (
+                    core_attn_out
+                    + self._cler_gamma_for_value(core_attn_out) * incoming_cler_residual
+                )
+            else:
+                core_attn_out = (
+                    core_attn_out
+                    + self._cler_gamma_for_value(core_attn_out) * core_attn_out.new_zeros(())
+                )
 
         nvtx_range_push(suffix="norm")
         norm_out = self._apply_norm(core_attn_out)

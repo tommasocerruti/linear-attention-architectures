@@ -154,6 +154,7 @@ if [ "${CLER_ENABLED:-0}" = "1" ]; then
         --cler-enabled
         --cler-gamma-init ${CLER_GAMMA_INIT:-0.0}
         --cler-gamma-mode ${CLER_GAMMA_MODE:-scalar}
+        --cler-injection-site ${CLER_INJECTION_SITE:-value}
         --cler-residual-norm-eps ${CLER_RESIDUAL_NORM_EPS:-1e-6}
     )
     if [ "${CLER_DETACH_RESIDUAL:-0}" = "1" ]; then
@@ -281,6 +282,7 @@ export WANDB_CLER_ENABLED=${CLER_ENABLED:-0}
 export WANDB_CLER_GAMMA_INIT=${CLER_GAMMA_INIT:-0.0}
 export WANDB_CLER_DETACH_RESIDUAL=${CLER_DETACH_RESIDUAL:-0}
 export WANDB_CLER_GAMMA_MODE=${CLER_GAMMA_MODE:-scalar}
+export WANDB_CLER_INJECTION_SITE=${CLER_INJECTION_SITE:-value}
 export WANDB_CLER_NORMALIZE_RESIDUAL=${CLER_NORMALIZE_RESIDUAL:-0}
 export WANDB_CLER_RESIDUAL_NORM_EPS=${CLER_RESIDUAL_NORM_EPS:-1e-6}
 export WANDB_LINEAR_TORCH_COMPILE=${MEGATRON_LINEAR_TORCH_COMPILE:-0}
