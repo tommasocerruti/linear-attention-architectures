@@ -1,6 +1,0 @@
-JobID                               JobName      State ExitCode               Start                 End    Elapsed 
------------- ------------------------------ ---------- -------- ------------------- ------------------- ---------- 
-1958063                 convert-fineweb-edu  COMPLETED      0:0            05:03:03            05:32:55   00:29:52 
-1958113           transformer-pp-350m-adamw  COMPLETED      0:0            05:33:00            06:04:30   00:31:30 
-1958118             transformer-pp-350m-gdn  COMPLETED      0:0            06:04:36            06:32:23   00:27:47 
-1958119        transformer-pp-350m-deltanet  COMPLETED      0:0            06:32:37            07:01:22   00:28:45 

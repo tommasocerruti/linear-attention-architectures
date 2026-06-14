@@ -1,15 +1,14 @@
 # Cross-Layer Residual Error Routing (CLER)
 
 CLER is our project on cross-layer residual error routing for large language
-model training on the Swiss AI Alps / Clariden cluster. The initial proposal
-is available at [tracker/week0/proposal.md](tracker/week0/proposal.md).
+model training on the Swiss AI Alps / Clariden cluster.
 
 This repository is built on top of
 [ischlag/megatron-lm-research-baseline](https://github.com/ischlag/megatron-lm-research-baseline),
 which itself builds on
 [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM). We use that
 baseline as the training and experimentation framework, and add our
-project-specific tracking, experiments, and modifications here.
+project-specific experiments and modifications here.
 
 The first CLER baseline track uses
 [FineWeb-Edu 100BT shuffled](https://huggingface.co/datasets/HuggingFaceFW/fineweb_edu_100BT-shuffled)
@@ -36,15 +35,6 @@ At a high level, this repository serves two purposes:
 - `git pull` pulls the latest changes from the tracked branch on `origin`.
 - `git pull upstream main` pulls updates from the professor repository.
 - After pulling upstream changes, run `git submodule update --init --recursive`.
-
-## Project tracker
-
-Project planning and weekly tracking live under [`tracker/`](tracker/README.md).
-
-- [`tracker/README.md`](tracker/README.md) contains the week-by-week schedule.
-- [`tracker/tom.md`](tracker/tom.md), [`tracker/tim.md`](tracker/tim.md),
-  [`tracker/ling.md`](tracker/ling.md), and [`tracker/george.md`](tracker/george.md)
-  are the individual diary files.
 
 ## Repository base
 

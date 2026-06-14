@@ -7,8 +7,7 @@
 # Queue with:
 #   sbatch _research/launch/transformer-pp-1p3b-fwe15b-gdn2-pytorch-adamw-17h58-external.sbatch
 #
-# Smoke first:
-#   sbatch _research/launch/debug-fwe50m-1p3b-gdn2-pytorch-adamw-smoke.sbatch
+# For a cheap environment check, run one of the retained smoke launchers first.
 #
 # Dataset behavior:
 # - If a real 15B FineWeb-Edu/LLaMA2 Megatron prefix exists at the standard

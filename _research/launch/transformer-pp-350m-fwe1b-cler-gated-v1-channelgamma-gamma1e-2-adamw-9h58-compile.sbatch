@@ -6,8 +6,7 @@
 # Queue with:
 #   sbatch _research/launch/transformer-pp-350m-fwe1b-cler-gated-v1-channelgamma-gamma1e-2-adamw-9h58-compile.sbatch
 #
-# Run debug smoke first:
-#   sbatch _research/launch/debug-fwe50m-cler-gated-channelgamma-gamma1e-2-adamw-smoke.sbatch
+# For a cheap environment check, run one of the retained smoke launchers first.
 #
 #SBATCH --job-name=cler-g-cg-350m-a
 #SBATCH --account=lsaie-ss26

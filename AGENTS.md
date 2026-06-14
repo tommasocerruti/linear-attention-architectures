@@ -18,8 +18,6 @@ project layer on top.
 
 | path | contents |
 | --- | --- |
-| `tracker/` | CLER planning, weekly tracking, and team notes |
-| `tracker/week0/proposal.md` | current proposal draft |
 | `_research/launch/` | launchable sbatches: baselines (`transformer-pp-<size>-<adamw\|muon>.sbatch`) and a 1B-token quick reference (`-ablation.sbatch`) |
 | `_research/leaderboards/<size>/README.md` | ranked result table + W&B links for that size |
 | `_research/leaderboards/<size>/runs/NN-*.sbatch` | frozen, self-contained sbatches |
@@ -49,7 +47,7 @@ and add a row to that README
 ## Good practices
 
 - **Keep CLER framing explicit** in docs: this is a CLER repo built on a baseline.
-- **Prefer adding project docs under `tracker/`** rather than cluttering the repo root.
+- **Prefer adding project docs under `docs/`** rather than cluttering the repo root.
 - **Flag-gate everything new**, default off. Add the CLI flag in
   `arguments.py` and the field in `optimizer_config.py`; don't change
   existing default behaviour.
