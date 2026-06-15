@@ -23,12 +23,6 @@ spec:
     git checkout $MCORE_MR_COMMIT
     git rev-parse HEAD
 
-    # Checkout backwards-ref
-    cd /opt
-    bash /opt/megatron-lm/.gitlab/scripts/fetch-legacy-suite.sh \
-      --backwards-commit $MCORE_BACKWARDS_COMMIT \
-      --repo $MCORE_REPO
-
   script: |-
     ls
 
@@ -37,11 +31,7 @@ spec:
     BUCKET="{test_case}"
     UNIT_TEST_REPEAT={n_repeat}
 
-    if [[ "$TAG" == "latest" ]]; then
-        TEST_PATH="/opt/megatron-lm"
-    else
-        TEST_PATH="/opt/megatron-lm-legacy/"
-    fi
+    TEST_PATH="/opt/megatron-lm"
 
 
     bash $TEST_PATH/tests/unit_tests/run_ci_test.sh \
@@ -62,112 +52,112 @@ products:
   - test_case: [tests/unit_tests/test_model_configs.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/test_fp8_param.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/pipeline_parallel/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/models/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/data/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/dist_checkpointing/test_optimizer.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/dist_checkpointing/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/dist_checkpointing/models/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/dist_checkpointing/models/test_moe_experts.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/transformer/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/inference/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/rl/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/post_training/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/resharding/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/ssm/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/transformer/moe/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
@@ -181,21 +171,21 @@ products:
   - test_case: [tests/unit_tests/**/*.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/transformer/test_multi_latent_attention.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
   - test_case: [tests/unit_tests/transformer/test_multi_token_prediction.py]
     products:
       - environment: [lts, dev]
-        tag: [latest, legacy]
+        tag: [latest]
         scope: [unit-tests]
         n_repeat: [1]
         time_limit: [1800]
