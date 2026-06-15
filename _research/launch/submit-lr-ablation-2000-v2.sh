@@ -3,8 +3,7 @@
 # Submit 19-job LR ablation v2 (2000 iters) sequentially, respecting a max of 2 jobs
 # (running + pending) in the debug partition at any time.
 #
-# Extension of submit-lr-ablation-2000.sh — same setup, adds missing LR values
-# for a more complete picture of which LR is best:
+# Submit the retained LR ablation grid with missing LR values filled in:
 #   - Reruns all 4 AdamW x softmax (1e-2,1e-3,1e-4,1e-5): original runs were
 #     broken (LR hardcoded to 3e-4 in the sbatch script, now fixed).
 #   - AdamW in-between LRs (3e-3,3e-4,3e-5) for all 3 architectures.
@@ -24,7 +23,7 @@ POLL_INTERVAL=10
 SBATCH_TIME=00:50:00
 COMMON="SEQ_LEN=4096,GBS=128,MBS=16,TRAIN_ITERS=2000,EXIT_DURATION_IN_MINS=45,EVAL_INTERVAL=100,EVAL_ITERS=1,WANDB_GROUP=lr-ablation-2000-v2-$DATE"
 
-echo "[$(date '+%H:%M:%S')] LR ablation v2 — extension of submit-lr-ablation-2000.sh."
+echo "[$(date '+%H:%M:%S')] LR ablation v2."
 echo "[$(date '+%H:%M:%S')] Adds missing LR values (adamw in-between: 3e-3/3e-4/3e-5; muon in-between: 1e-3/3e-5)"
 echo "[$(date '+%H:%M:%S')] and reruns softmax x adamw with the LR bug fixed. 19 jobs total."
 
