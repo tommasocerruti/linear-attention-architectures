@@ -1,10 +1,16 @@
-# linear-attention-architectures
+# Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing
 
 This repository accompanies the technical report [Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing](TODO).
 
-It is a focused fork of [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), via the Clariden research baseline, used to train and evaluate linear-attention language models at 350M scale and above. The release keeps the Megatron core intact where possible and layers the paper-specific mechanisms, launchers, data preparation, smoke checks, and evaluation wrappers on top.
+It can be cited as
 
-## What Is Included
+```
+TODO
+```
+
+It is a fork of [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), via the [Clariden research baseline](https://github.com/ischlag/megatron-lm-research-baseline), used to train and evaluate linear-attention language models at 350M - 3B parameters scale. 
+
+## Mechanisms supported
 
 The code supports the mechanisms studied in the report:
 
@@ -13,7 +19,7 @@ The code supports the mechanisms studied in the report:
 - Kimi Delta Attention
 - Gated DeltaNet-2
 - CLER, cross-layer error routing
-- CLVR, value routing for cross-layer residual signals
+- CLVR, value routing for cross-layer residual signals (*our best performing cross-layer approach built on top of DeltaNet architectures*)
 
 The main implementation lives under `megatron/core/ssm/` and the routing state is integrated through `megatron/core/transformer/transformer_block.py`. The launch scripts under `_research/launch/` are the executable source of truth for experiment-specific flags.
 
@@ -115,21 +121,3 @@ HF_HOME=$HF_HOME \
 ```
 
 The wrapper starts `tools/run_loglikelihood_scoring_server.py`, waits for readiness, and then runs `lm-eval`. Use the server log to confirm that linear-attention and CLER checkpoint arguments were restored before trusting scores.
-
-## Local Verification
-
-The focused CPU test bundle is:
-
-```bash
-python3 -m pytest \
-  tests/unit_tests/ssm/test_cler_delta_net_pytorch.py \
-  tests/unit_tests/ssm/test_gated_delta_net_pytorch_cler.py \
-  tests/unit_tests/ssm/test_cler_fast_rules.py \
-  -q
-```
-
-On CPU-only machines, the fast FLA tests skip when CUDA or FLA kernels are unavailable. For release checks, also run Python AST parsing over tracked `*.py` files and `bash -n` over tracked `*.sh` and `*.sbatch` files.
-
-## Notes
-
-This is still a Megatron fork. Keep inherited Megatron APIs and general tooling backward compatible unless a paper-critical change requires otherwise. For run-specific details, prefer the launchers over prose: they are the most precise record of model shape, routing mode, optimizer settings, token budget, checkpoint format, and evaluation cadence.
