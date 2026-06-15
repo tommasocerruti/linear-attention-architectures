@@ -44,7 +44,7 @@ Base dir: `/iopsstor/scratch/cscs/lingfeng/cler/_research/results/checkpoints/`
 ## How to load
 
 Pass the PARENT directory (without `/iter_0028610`) as `--load`; Megatron reads
-`latest_checkpointed_iteration.txt`. Use this repo on branch `mega-cler` (the DELTANET-CLER-*
+`latest_checkpointed_iteration.txt`. Use this repo on the current release branch (the DELTANET-CLER-*
 checkpoints need the delta_net.py CLER support committed alongside this file). Reproduce each
 architecture's exact flags with the matching launcher in `_research/launch/final-<NAME>.sbatch`.
 Tokenizer: Llama2Tokenizer, model file at

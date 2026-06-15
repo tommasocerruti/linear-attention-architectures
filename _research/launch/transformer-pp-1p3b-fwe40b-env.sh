@@ -5,8 +5,8 @@
 # (LINEAR_VARIANT / CLER_* / ATTN_RES_* / EXP_NAME / WANDB_ARCH / EXIT_DURATION_IN_MINS).
 #
 # =============================== EDIT THESE (per-user paths / account / W&B) ===============================
-# 1) Your cler checkout (MUST be on branch `mega-cler` with the AttnRes/dyngate changes pulled):
-export CLER_REPO_ROOT=${CLER_REPO_ROOT:-/iopsstor/scratch/cscs/$USER/cler-mega-cler}
+# 1) Your release checkout:
+export CLER_REPO_ROOT=${CLER_REPO_ROOT:-/iopsstor/scratch/cscs/$USER/linear-attention-architectures}
 # 2) Your 40-45B FineWeb-Edu (LLaMA2-tokenized) Megatron prefix. We could NOT see your scratch
 #    from our account, so this is a placeholder. A ~45B FineWeb-Edu download script exists in the
 #    repo (commit "added 45b fineweb_edu download"). The path must end at the *_text_document prefix.
@@ -49,7 +49,7 @@ export MIN_LR=${MIN_LR:-3.6e-5}
 export ENABLE_CHECKPOINTING=1
 export SAVE_INTERVAL=${SAVE_INTERVAL:-500}
 export CKPT_FORMAT=torch
-export SAVE_DIR=${SAVE_DIR:-/iopsstor/scratch/cscs/$USER/cler-mega-cler/_research/results/checkpoints/${EXP_NAME:-run}-${SLURM_JOB_ID:-manual}}
+export SAVE_DIR=${SAVE_DIR:-/iopsstor/scratch/cscs/$USER/linear-attention-architectures/_research/results/checkpoints/${EXP_NAME:-run}-${SLURM_JOB_ID:-manual}}
 export EVAL_INTERVAL=${EVAL_INTERVAL:-200}
 export EVAL_ITERS=${EVAL_ITERS:-10}
 

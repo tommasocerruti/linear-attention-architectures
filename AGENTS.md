@@ -1,86 +1,48 @@
 # Agents Guide
 
-Technical orientation for AI assistants working in this repo. Read this
-once on first entry; use it as a reference, not a script.
+Technical orientation for AI assistants working in this repository. Treat it as the release repo for the technical report "Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing", not as a tracker-first CLER workspace.
 
-## What this is
+## What This Is
 
-The private repository for **Cross-Layer Residual Error Routing (CLER)**,
-built on top of
-[ischlag/megatron-lm-research-baseline](https://github.com/ischlag/megatron-lm-research-baseline),
-which itself builds on [NVIDIA/Megatron-LM](https://github.com/NVIDIA/Megatron-LM).
+This is a focused Megatron-LM fork for reproducing the paper's linear-attention experiments. It keeps the Megatron core source, tests, tools, and package metadata available for backward compatibility, while adding the paper mechanisms and Clariden launch/evaluation scripts needed for reproduction.
 
-Treat the professor baseline as the training scaffold and core codebase.
-Treat CLER-specific tracking, notes, and future implementation work as the
-project layer on top.
+The supported paper mechanisms are DeltaNet, Gated DeltaNet, Kimi Delta Attention, Gated DeltaNet-2, CLER, and CLVR. The experiment launchers under `_research/launch/` are the executable source of truth for run-specific flags.
 
-## Repo layout
+## Repo Layout
 
-| path | contents |
+| Path | Contents |
 | --- | --- |
-| `tracker/` | CLER planning, weekly tracking, and team notes |
-| `tracker/week0/proposal.md` | current proposal draft |
-| `_research/launch/` | launchable sbatches: baselines (`transformer-pp-<size>-<adamw\|muon>.sbatch`) and a 1B-token quick reference (`-ablation.sbatch`) |
-| `_research/leaderboards/<size>/README.md` | ranked result table + W&B links for that size |
-| `_research/leaderboards/<size>/runs/NN-*.sbatch` | frozen, self-contained sbatches |
-| `_research/logging_patch/` | JSONL + wandb telemetry, activated by a two-line hook in `pretrain_gpt.py` |
-| `_research/data/` | tokenizer files (GPT-2 BPE) |
-| `_research/results/` | gitignored run outputs (logs, tensorboard, wandb) |
-| `megatron/core/optimizer/emerging_optimizers.py` | Muon / AdaMuon / NorMuon glue |
-| `megatron/core/optimizer/ademamix.py` | AdEMAMix port |
-| `megatron/core/activations.py` | xIELU activation |
-| `megatron/training/arguments.py` | CLI flags (baseline + local additions) |
-| `megatron/core/optimizer/optimizer_config.py` | `OptimizerConfig` fields; mirror each new CLI flag here |
-| `pretrain_gpt.py` | entrypoint + logging-patch hook |
+| `megatron/` | Megatron core plus local linear-attention and routing implementations |
+| `_research/data/` | FineWeb-Edu conversion scripts and tokenizer assets |
+| `_research/launch/` | Final launchers, smoke checks, scale runs, and ablation submitters |
+| `_research/eval/` | `lm-eval` wrappers for native Megatron checkpoints |
+| `tools/run_loglikelihood_scoring_server.py` | Full-sequence scoring server used for downstream evaluation |
+| `docs/reproducibility.md` | Longer reproduction notes |
+| `tests/unit_tests/ssm/` | Focused tests for DeltaNet/GDN/CLER routing behavior |
 
-Everything not listed is baseline Megatron or baseline research infra. Treat
-it as read-only unless you're making a targeted, justified change.
+Everything else is inherited Megatron or baseline infrastructure. Treat broad core rewrites as high risk.
 
-## How experiments flow
+## Working Rules
 
-```text
-copy an existing sbatch in _research/launch/, edit the optimizer/LR/schedule block
-        ↓  if a config wins
-snapshot a self-contained sbatch into
-_research/leaderboards/<size>/runs/NN-*.sbatch
-and add a row to that README
-```
+- Preserve backward compatibility unless the user explicitly asks for a breaking paper-release change.
+- Keep paper reproduction files: final 350M/15B launchers, shared `transformer-pp-350m-linear-muon.sbatch`, smoke launchers, LR and sequence-scaling submitters, larger-scale routing launchers, `_research/data`, `_research/eval`, tests, tools, and Megatron source.
+- Do not recreate tracker-style planning folders. Put durable docs in `docs/` or in the relevant `_research/*/README.md`.
+- Flag-gate new behavior and keep defaults compatible with inherited Megatron behavior.
+- Do not remove the logging-patch hook in `pretrain_gpt.py`.
+- Muon with `--overlap-param-gather` is broken here. Keep `--use-distributed-optimizer` and `--overlap-grad-reduce`, but do not add `--overlap-param-gather` for `--optimizer muon|adaptive_muon`.
+- Never launch a SLURM job without a stopping condition such as `--train-iters`, `--train-samples`, or `--exit-duration-in-mins`.
+- Cluster paths in launchers are Clariden-specific. To port the repo, edit `#SBATCH` headers, scratch paths, container environment, and data/tokenizer variables explicitly.
 
-## Good practices
+## Verification Habits
 
-- **Keep CLER framing explicit** in docs: this is a CLER repo built on a baseline.
-- **Prefer adding project docs under `tracker/`** rather than cluttering the repo root.
-- **Flag-gate everything new**, default off. Add the CLI flag in
-  `arguments.py` and the field in `optimizer_config.py`; don't change
-  existing default behaviour.
-- **Don't remove the logging-patch hook** in `pretrain_gpt.py`.
-- **Muon + `--overlap-param-gather` is broken**. Keep
-  `--use-distributed-optimizer` and `--overlap-grad-reduce`, but drop
-  `--overlap-param-gather` for `--optimizer muon|adaptive_muon`.
-- **No SLURM job without a stopping condition** (`--train-iters`,
-  `--train-samples`, or `--exit-duration-in-mins`).
-- **Cluster specifics are hardcoded** in `#SBATCH` headers. To port to a
-  new site, edit the header block and `--data-path`.
-- **Do not modify unrelated baseline code** just to make the repo feel more CLER-specific.
-
-## Git workflow
-
-- `origin` = private CLER repository
-- `upstream` = professor baseline repository
-
-Useful commands:
+For code changes, prefer focused tests first:
 
 ```bash
-git push
-git pull
-git pull upstream main
-git submodule update --init --recursive
+python3 -m pytest tests/unit_tests/ssm/test_cler_delta_net_pytorch.py tests/unit_tests/ssm/test_gated_delta_net_pytorch_cler.py tests/unit_tests/ssm/test_cler_fast_rules.py -q
 ```
 
-## When to pause and ask the human
+For release cleanup changes, also run AST parsing over tracked Python files, `bash -n` over tracked shell and sbatch files, and `rg` checks for stale tracker or old-repo references.
 
-- Adding cluster-wide or repo-wide dependencies.
-- Launching jobs above the node cap the human has set.
-- Changing remotes, branch strategy, or repo structure.
-- Touching upstream source outside the flag-gated exceptions.
-- Deleting results, branches, or worktrees you didn't create.
+## When To Pause
+
+Ask the human before adding repo-wide dependencies, changing remotes or branch strategy, launching expensive jobs, deleting results/checkpoints, or modifying broad inherited Megatron behavior unrelated to the paper mechanisms.

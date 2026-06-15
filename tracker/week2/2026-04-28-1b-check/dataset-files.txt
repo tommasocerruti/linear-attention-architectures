@@ -1,2 +1,0 @@
--rw-r-----+ 1 course_00206 lsaie-ss26 1.9G Apr 28 05:32 /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2_text_document.bin
--rw-r-----+ 1 course_00206 lsaie-ss26  17M Apr 28 05:32 /iopsstor/scratch/cscs/course_00206/cler/_research/results/data/fineweb_edu/fineweb_edu_1000000000_llama2/fineweb_edu_1000000000_llama2_text_document.idx

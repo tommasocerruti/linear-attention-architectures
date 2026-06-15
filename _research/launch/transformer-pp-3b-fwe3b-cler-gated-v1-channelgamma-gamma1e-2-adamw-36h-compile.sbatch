@@ -8,8 +8,7 @@
 # Queue with:
 #   sbatch _research/launch/transformer-pp-3b-fwe3b-cler-gated-v1-channelgamma-gamma1e-2-adamw-36h-compile.sbatch
 #
-# Run smoke first:
-#   sbatch _research/launch/debug-fwe50m-3b-cler-gated-channelgamma-adamw-smoke.sbatch
+# For a cheap environment check, run one of the retained smoke launchers first.
 #
 # If running from another account/checkout, override:
 #   CLER_REPO_ROOT=/path/to/cler
