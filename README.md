@@ -1,5 +1,10 @@
 # Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing
 
+<p align="center">
+  <a href="https://arxiv.org/abs/2607.07953"><img src="https://img.shields.io/badge/arXiv-2607.07953-b31b1b.svg" alt="arXiv"></a>
+  <a href="https://arxiv.org/pdf/2607.07953"><img src="https://img.shields.io/badge/Paper-PDF-blue.svg" alt="Paper PDF"></a>
+</p>
+
 This repository accompanies the technical report [Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing](https://arxiv.org/abs/2607.07953).
 
 It can be cited as
