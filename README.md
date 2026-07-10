@@ -7,7 +7,7 @@
 
 This repository accompanies the technical report [Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing](https://arxiv.org/abs/2607.07953).
 
-It can be cited as
+If you use this repository or build on the accompanying report, please cite:
 
 ```bibtex
 @misc{cerruti2026linearattentionarchitecturesmechanisms,
@@ -21,7 +21,11 @@ It can be cited as
 }
 ```
 
-It is a fork of [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), via the [Clariden research baseline](https://github.com/ischlag/megatron-lm-research-baseline), used to train and evaluate linear-attention language models at 350M - 3B parameters scale. 
+## When to cite
+
+Consider citing this report if your work compares modern linear-attention architectures, uses DeltaNet/Gated DeltaNet/Kimi Delta Attention/Gated DeltaNet-2 baselines, studies recurrent associative memory for language models, evaluates hybrid versus pure linear-attention stacks, or builds on CLER/CLVR-style cross-layer routing.
+
+It is a fork of [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), via the [Clariden research baseline](https://github.com/ischlag/megatron-lm-research-baseline), used to train and evaluate linear-attention language models at the 350M–3B parameter scale.
 
 ## Mechanisms supported
 
@@ -31,8 +35,8 @@ The code supports the mechanisms studied in the report:
 - Gated DeltaNet
 - Kimi Delta Attention
 - Gated DeltaNet-2
-- CLER, cross-layer error routing
-- CLVR, value routing for cross-layer residual signals (*our best performing cross-layer approach built on top of DeltaNet architectures*)
+- CLER (Cross-Layer Error Residuals), cross-layer error routing
+- CLVR (Cross-Layer Value Routing), routing write values into the residual stream for DeltaNet-style architectures
 
 The main implementation lives under `megatron/core/ssm/` and the routing state is integrated through `megatron/core/transformer/transformer_block.py`. The launch scripts under `_research/launch/` are the executable source of truth for experiment-specific flags.
 
