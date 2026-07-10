@@ -1,11 +1,19 @@
 # Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing
 
-This repository accompanies the technical report [Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing](TODO).
+This repository accompanies the technical report [Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing](https://arxiv.org/abs/2607.07953).
 
 It can be cited as
 
-```
-TODO
+```bibtex
+@misc{cerruti2026linearattentionarchitecturesmechanisms,
+      title={Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing}, 
+      author={Tommaso Cerruti and Tim Rieder and George Rowlands and Lingfeng Jin and Imanol Schlag},
+      year={2026},
+      eprint={2607.07953},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2607.07953}, 
+}
 ```
 
 It is a fork of [Megatron-LM](https://github.com/NVIDIA/Megatron-LM), via the [Clariden research baseline](https://github.com/ischlag/megatron-lm-research-baseline), used to train and evaluate linear-attention language models at 350M - 3B parameters scale. 
