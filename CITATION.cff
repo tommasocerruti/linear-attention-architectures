@@ -1,0 +1,51 @@
+cff-version: 1.2.0
+message: "If you use this repository, please cite the accompanying arXiv report."
+type: software
+title: "Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing"
+authors:
+  - family-names: Cerruti
+    given-names: Tommaso
+  - family-names: Rieder
+    given-names: Tim
+  - family-names: Rowlands
+    given-names: George
+  - family-names: Jin
+    given-names: Lingfeng
+  - family-names: Schlag
+    given-names: Imanol
+repository-code: "https://github.com/tommasocerruti/linear-attention-architectures"
+url: "https://arxiv.org/abs/2607.07953"
+date-released: "2026-07-08"
+keywords:
+  - linear attention
+  - efficient attention
+  - DeltaNet
+  - Gated DeltaNet
+  - Kimi Delta Attention
+  - Gated DeltaNet-2
+  - recurrent memory
+  - long-context language models
+  - Megatron-LM
+  - cross-layer routing
+  - CLER
+  - CLVR
+preferred-citation:
+  type: article
+  title: "Linear Attention Architectures: Mechanisms, Trade-offs, and Cross-Layer Routing"
+  authors:
+    - family-names: Cerruti
+      given-names: Tommaso
+    - family-names: Rieder
+      given-names: Tim
+    - family-names: Rowlands
+      given-names: George
+    - family-names: Jin
+      given-names: Lingfeng
+    - family-names: Schlag
+      given-names: Imanol
+  year: 2026
+  url: "https://arxiv.org/abs/2607.07953"
+  identifiers:
+    - type: other
+      value: "arXiv:2607.07953"
+      description: "arXiv"
